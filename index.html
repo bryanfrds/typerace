@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Type Race</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  :root { --bg:#323437; --panel:#2c2e31; --sub:#646669; --text:#d1d0c5; --main:#e2b714; --err:#ca4754; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:var(--bg); color:var(--text);
+    font-family:"Roboto Mono", ui-monospace, monospace; display:flex; justify-content:center; }
+  .wrap { width:100%; max-width:960px; padding:32px 16px; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:40px; flex-wrap:wrap; }
+  .logo { font-size:24px; color:var(--text); }
+  .logo span { color:var(--main); }
+  .muted { color:var(--sub); }
+  button, input, select { font:inherit; color:var(--text); background:var(--panel); border:0; border-radius:8px; padding:10px 14px; }
+  button { cursor:pointer; }
+  button:hover { background:var(--text); color:var(--bg); }
+  button.primary { background:var(--main); color:var(--bg); }
+  input:focus, select:focus, button:focus-visible { outline:2px solid var(--main); }
+  .hidden { display:none !important; }
+
+  #home { display:flex; flex-direction:column; gap:16px; max-width:420px; margin:60px auto; }
+  #home label { color:var(--sub); font-size:14px; }
+  .row { display:flex; gap:8px; }
+  .row input { flex:1; min-width:0; }
+  #homeErr { color:var(--err); min-height:1.2em; }
+
+  #players { display:flex; flex-direction:column; gap:10px; margin-bottom:36px; }
+  .p { display:grid; grid-template-columns:140px 1fr 90px; align-items:center; gap:12px; font-size:14px; }
+  .p .name { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .p.me .name { color:var(--main); }
+  .bar { height:6px; background:var(--panel); border-radius:3px; overflow:hidden; }
+  .bar i { display:block; height:100%; width:0; background:var(--sub); transition:width .15s; }
+  .p.me .bar i { background:var(--main); }
+  .p .stat { text-align:right; color:var(--sub); }
+
+  #status { text-align:center; color:var(--sub); min-height:1.5em; margin-bottom:16px; }
+  #count { color:var(--main); font-size:32px; }
+  #liveWpm { color:var(--main); font-size:20px; min-height:1.5em; }
+
+  #box { position:relative; height:calc(3 * 2.2em); overflow:hidden; font-size:24px; line-height:2.2em; outline:none; }
+  #words { display:flex; flex-wrap:wrap; transition:transform .12s; }
+  #box.blur #words { filter:blur(4px); opacity:.5; }
+  #box .hint { position:absolute; inset:0; display:none; align-items:center; justify-content:center; color:var(--text); font-size:16px; }
+  #box.blur .hint { display:flex; }
+  .w { margin-right:.6em; color:var(--sub); position:relative; }
+  .w.err { text-decoration:underline var(--err); text-underline-offset:6px; }
+  .w .ok { color:var(--text); }
+  .w .bad { color:var(--err); }
+  .w .extra { color:#7e2a33; }
+  .w .cur::before { content:""; position:absolute; width:2px; height:1.2em; margin-top:.5em; background:var(--main);
+    margin-left:-1px; animation:blink 1s step-end infinite; }
+  .w .cur.end::before { margin-left:1px; }
+  body.typing .w .cur::before { animation:none; }
+  @keyframes blink { 50% { opacity:0; } }
+
+  #controls { display:flex; justify-content:center; gap:10px; margin-top:32px; flex-wrap:wrap; align-items:center; }
+  #results { margin-top:32px; }
+  #results table { width:100%; border-collapse:collapse; font-size:15px; }
+  #results th { text-align:left; color:var(--sub); font-weight:400; padding:6px 8px; }
+  #results td { padding:8px; border-top:1px solid var(--panel); }
+  #results td.big { color:var(--main); font-size:20px; }
+  @media (max-width:600px) {
+    .p { grid-template-columns:90px 1fr 70px; }
+    #box { font-size:18px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">type<span>race</span></div>
+    <div id="roomInfo" class="hidden">
+      <span class="muted">room</span> <b id="roomCode"></b>
+      <button id="copyBtn">copy invite link</button>
+    </div>
+  </header>
+
+  <section id="home">
+    <label for="name">your name</label>
+    <input id="name" maxlength="16" placeholder="name" autocomplete="off">
+    <button id="createBtn" class="primary">create room</button>
+    <label for="code">or join a friend's room</label>
+    <div class="row">
+      <input id="code" maxlength="4" placeholder="CODE" autocomplete="off" style="text-transform:uppercase">
+      <button id="joinBtn">join</button>
+    </div>
+    <div id="homeErr"></div>
+  </section>
+
+  <section id="room" class="hidden">
+    <div id="players"></div>
+    <div id="status"></div>
+    <div id="liveWpm"></div>
+    <div id="box" tabindex="0"><div id="words"></div><div class="hint">click here or press any key to focus</div></div>
+    <div id="results" class="hidden"></div>
+    <div id="controls">
+      <span id="hostCtl" class="hidden">
+        <select id="len" aria-label="number of words">
+          <option value="10">10 words</option>
+          <option value="25" selected>25 words</option>
+          <option value="50">50 words</option>
+          <option value="100">100 words</option>
+        </select>
+        <button id="startBtn" class="primary">start race</button>
+      </span>
+    </div>
+  </section>
+</div>
+
+<script>
+const WORDS = "the be of and a to in he have it that for they with as not on she at by this we you do but from or which one would all will there say who make when can more if no man out other so what time up go about than into could state only new year some take come these know see use get like then first any work now may such give over think most even find day also after way many must look before great back through long where much should well people down own just because good each those feel seem how high too place little world very still nation hand old life tell write become here show house both between need mean call develop under last right move thing general school never same another begin while number part turn real leave might want point form off child few small since against ask late home interest large person end open public follow during present without again hold govern around possible head consider word program problem however lead system set order eye plan run keep face fact group play stand increase early course change help line".split(" ");
+
+const $ = id => document.getElementById(id);
+const PREFIX = "typerace-v1-";
+const ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+
+let peer, isHost = false, hostConn = null, myId = null, roomCode = "";
+const conns = new Map();        // host only: peerId -> DataConnection
+let players = {};               // id -> {name, progress, wpm, acc, done, time}
+let race = null;                // current race text (array of words)
+
+// ---------- home ----------
+try { $("name").value = localStorage.getItem("typerace-name") || ""; } catch {}
+const hashCode = location.hash.slice(1).toUpperCase();
+if (/^[A-Z]{4}$/.test(hashCode)) $("code").value = hashCode;
+
+function myName() {
+  const n = $("name").value.trim() || "guest" + Math.floor(Math.random() * 900 + 100);
+  try { localStorage.setItem("typerace-name", n); } catch {}
+  return n;
+}
+function homeErr(msg) { $("homeErr").textContent = msg; }
+
+$("createBtn").onclick = () => createRoom(myName());
+$("joinBtn").onclick = () => joinRoom(myName(), $("code").value.trim().toUpperCase());
+$("code").onkeydown = e => { if (e.key === "Enter") $("joinBtn").click(); };
+$("name").onkeydown = e => { if (e.key === "Enter") ($("code").value ? $("joinBtn") : $("createBtn")).click(); };
+
+function randomCode() { return Array.from({ length: 4 }, () => ALPHA[Math.floor(Math.random() * ALPHA.length)]).join(""); }
+
+function createRoom(name, tries = 0) {
+  homeErr("creating room…");
+  roomCode = randomCode();
+  peer = new Peer(PREFIX + roomCode);
+  peer.on("open", id => {
+    isHost = true; myId = id;
+    players = { [id]: blankPlayer(name) };
+    enterRoom();
+  });
+  peer.on("connection", onGuest);
+  peer.on("error", err => {
+    if (err.type === "unavailable-id" && tries < 5) { peer.destroy(); return createRoom(name, tries + 1); }
+    homeErr("couldn't create room: " + err.type);
+  });
+}
+
+function joinRoom(name, code) {
+  if (!/^[A-Z]{4}$/.test(code)) return homeErr("room codes are 4 letters");
+  homeErr("joining…");
+  roomCode = code;
+  peer = new Peer();
+  peer.on("open", id => {
+    myId = id;
+    hostConn = peer.connect(PREFIX + code, { reliable: true });
+    hostConn.on("open", () => { hostConn.send({ t: "hello", name }); enterRoom(); });
+    hostConn.on("data", onHostMsg);
+    hostConn.on("close", () => { setStatus("the host left the room"); race = null; });
+  });
+  peer.on("error", err => {
+    homeErr(err.type === "peer-unavailable" ? "no room with that code" : "couldn't join: " + err.type);
+  });
+}
+
+function blankPlayer(name) { return { name, progress: 0, wpm: 0, acc: 0, done: false, time: 0 }; }
+
+function enterRoom() {
+  $("home").classList.add("hidden");
+  $("room").classList.remove("hidden");
+  $("roomInfo").classList.remove("hidden");
+  $("roomCode").textContent = roomCode;
+  history.replaceState(null, "", "#" + roomCode);
+  $("hostCtl").classList.toggle("hidden", !isHost);
+  setStatus(isHost ? "share the invite link, then start the race" : "waiting for the host to start");
+  renderPlayers();
+}
+
+$("copyBtn").onclick = () => {
+  const link = location.origin + location.pathname + "#" + roomCode;
+  navigator.clipboard?.writeText(link).then(() => {
+    $("copyBtn").textContent = "copied!";
+    setTimeout(() => $("copyBtn").textContent = "copy invite link", 1500);
+  });
+};
+
+// ---------- networking ----------
+function onGuest(conn) {
+  conn.on("data", msg => {
+    if (msg.t === "hello") {
+      conns.set(conn.peer, conn);
+      players[conn.peer] = blankPlayer(String(msg.name).slice(0, 16));
+      broadcastPlayers(true);
+    } else if (msg.t === "prog" && players[conn.peer]) {
+      Object.assign(players[conn.peer], pickProg(msg));
+      broadcastPlayers();
+    }
+  });
+  conn.on("close", () => { conns.delete(conn.peer); delete players[conn.peer]; broadcastPlayers(true); });
+}
+
+function pickProg(m) { return { progress: +m.progress || 0, wpm: +m.wpm || 0, acc: +m.acc || 0, done: !!m.done, time: +m.time || 0 }; }
+
+let bcTimer = null;
+function broadcastPlayers(now) {
+  const send = () => {
+    bcTimer = null;
+    for (const c of conns.values()) c.send({ t: "players", players });
+    renderPlayers();
+  };
+  if (now) { clearTimeout(bcTimer); return send(); }
+  if (!bcTimer) bcTimer = setTimeout(send, 120);
+}
+
+function onHostMsg(msg) {
+  if (msg.t === "players") { players = msg.players; renderPlayers(); }
+  else if (msg.t === "start") beginCountdown(msg.text);
+}
+
+function sendProgress(p) {
+  if (isHost) { Object.assign(players[myId], p); broadcastPlayers(p.done); }
+  else hostConn?.open && hostConn.send({ t: "prog", ...p });
+}
+
+// ---------- players list ----------
+function renderPlayers() {
+  const list = Object.entries(players);
+  $("players").innerHTML = list.map(([id, p]) => `
+    <div class="p ${id === myId ? "me" : ""}">
+      <span class="name">${esc(p.name)}${id === myId ? " (you)" : ""}</span>
+      <span class="bar"><i style="width:${Math.round(p.progress * 100)}%"></i></span>
+      <span class="stat">${p.done ? "✓ " : ""}${p.wpm} wpm</span>
+    </div>`).join("");
+  if (race && list.length && list.every(([, p]) => p.done)) showResults();
+}
+function esc(s) { return s.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`); }
+function setStatus(html) { $("status").innerHTML = html; }
+
+// ---------- race flow ----------
+$("startBtn").onclick = () => {
+  const n = +$("len").value;
+  const text = Array.from({ length: n }, () => WORDS[Math.floor(Math.random() * WORDS.length)]);
+  for (const c of conns.values()) c.send({ t: "start", text });
+  beginCountdown(text);
+};
+
+let countdownTimer = null;
+function beginCountdown(text) {
+  race = text;
+  for (const p of Object.values(players)) Object.assign(p, { progress: 0, wpm: 0, acc: 0, done: false, time: 0 });
+  renderPlayers();
+  $("results").classList.add("hidden");
+  $("hostCtl").classList.add("hidden");
+  $("liveWpm").textContent = "";
+  setupTyping(text);
+  let n = 3;
+  clearInterval(countdownTimer);
+  setStatus(`<span id="count">${n}</span>`);
+  countdownTimer = setInterval(() => {
+    n--;
+    if (n > 0) return setStatus(`<span id="count">${n}</span>`);
+    clearInterval(countdownTimer);
+    setStatus("go!");
+    T.live = true;
+    T.start = performance.now();
+    $("box").focus();
+  }, 1000);
+}
+
+function showResults() {
+  const rows = Object.entries(players).sort(([, a], [, b]) => a.time - b.time);
+  $("results").innerHTML = `<table>
+    <tr><th>#</th><th>name</th><th>wpm</th><th>accuracy</th><th>time</th></tr>
+    ${rows.map(([id, p], i) => `<tr>
+      <td>${i + 1}</td><td>${esc(p.name)}${id === myId ? " (you)" : ""}</td>
+      <td class="big">${p.wpm}</td><td>${p.acc}%</td><td>${(p.time / 1000).toFixed(1)}s</td></tr>`).join("")}
+  </table>`;
+  $("results").classList.remove("hidden");
+  race = null;
+  $("hostCtl").classList.toggle("hidden", !isHost);
+  $("startBtn").textContent = "race again";
+  setStatus(isHost ? "everyone finished" : "everyone finished, waiting for the host");
+}
+
+// ---------- typing engine ----------
+const T = { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false };
+
+function setupTyping(words) {
+  Object.assign(T, { words, wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false });
+  $("words").innerHTML = words.map((_, i) => `<span class="w" id="w${i}"></span>`).join("");
+  $("words").style.transform = "";
+  words.forEach((_, i) => renderWord(i));
+}
+
+function renderWord(i) {
+  const target = T.words[i];
+  const inp = i === T.wi ? T.input : (T.typed[i] ?? "");
+  let html = "";
+  const len = Math.max(target.length, inp.length);
+  for (let j = 0; j < len; j++) {
+    const cur = i === T.wi && j === inp.length && !T.done ? " cur" : "";
+    if (j < target.length) {
+      const cls = j < inp.length ? (inp[j] === target[j] ? "ok" : "bad") : "";
+      html += `<span class="${cls}${cur}">${target[j]}</span>`;
+    } else html += `<span class="extra${cur}">${esc(inp[j])}</span>`;
+  }
+  if (i === T.wi && inp.length >= len && !T.done) html += `<span class="cur end"></span>`;
+  const el = $("w" + i);
+  el.innerHTML = html;
+  el.classList.toggle("err", i < T.wi && T.typed[i] !== target);
+}
+
+function correctChars() {
+  let c = 0;
+  for (let i = 0; i < T.wi; i++) if (T.typed[i] === T.words[i]) c += T.words[i].length + 1;
+  const t = T.words[T.wi] || "";
+  let k = 0;
+  while (k < T.input.length && T.input[k] === t[k]) k++;
+  return c + k;
+}
+
+function stats() {
+  const ms = performance.now() - T.start;
+  const total = T.words.join(" ").length;
+  const cc = correctChars();
+  return {
+    progress: Math.min(1, cc / total),
+    wpm: ms > 500 ? Math.round(cc / 5 / (ms / 60000)) : 0,
+    acc: T.keys ? Math.round((T.good / T.keys) * 100) : 100,
+    done: T.done,
+    time: Math.round(ms),
+  };
+}
+
+function scrollToCurrent() {
+  const el = $("w" + T.wi);
+  if (!el) return;
+  const lineH = el.offsetHeight || 1;
+  const line = Math.round(el.offsetTop / lineH);
+  $("words").style.transform = `translateY(${-Math.max(0, line - 1) * lineH}px)`;
+}
+
+let typingIdle;
+document.addEventListener("keydown", e => {
+  if ($("room").classList.contains("hidden") || !T.live || T.done) return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (document.activeElement !== $("box")) $("box").focus();
+  document.body.classList.add("typing");
+  clearTimeout(typingIdle);
+  typingIdle = setTimeout(() => document.body.classList.remove("typing"), 600);
+
+  const target = T.words[T.wi];
+  const prev = T.wi;
+  if (e.key === "Backspace") {
+    e.preventDefault();
+    if (T.input) T.input = T.input.slice(0, -1);
+    else if (T.wi > 0 && T.typed[T.wi - 1] !== T.words[T.wi - 1]) {   // go back to fix a wrong word
+      T.wi--; T.input = T.typed[T.wi]; T.typed.length = T.wi;
+    }
+  } else if (e.key === " ") {
+    e.preventDefault();
+    if (!T.input) return;
+    T.keys++; if (T.input === target) T.good++;
+    T.typed[T.wi] = T.input; T.input = "";
+    if (T.wi === T.words.length - 1) T.done = true; else T.wi++;
+  } else if (e.key.length === 1) {
+    e.preventDefault();
+    if (T.input.length > target.length + 10) return;
+    T.keys++; if (e.key === target[T.input.length]) T.good++;
+    T.input += e.key;
+    if (T.wi === T.words.length - 1 && T.input === target) { T.typed[T.wi] = T.input; T.done = true; }
+  } else return;
+
+  renderWord(prev); if (prev !== T.wi) renderWord(T.wi);
+  scrollToCurrent();
+  const s = stats();
+  $("liveWpm").textContent = T.done ? `${s.wpm} wpm · ${s.acc}% acc` : s.wpm;
+  if (T.done) setStatus("finished! waiting for the others…");
+  sendProgress(s);
+});
+
+// live WPM ticks while typing so slow typers' numbers stay current
+setInterval(() => { if (T.live && !T.done && T.keys) sendProgress(stats()); }, 1000);
+
+const updateBlur = () => $("box").classList.toggle("blur", !!race && document.activeElement !== $("box"));
+$("box").addEventListener("focus", updateBlur);
+$("box").addEventListener("blur", updateBlur);
+$("box").addEventListener("click", () => $("box").focus());
+setInterval(updateBlur, 300);
+</script>
+</body>
+</html>
