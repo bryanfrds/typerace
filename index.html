@@ -125,13 +125,16 @@
         <button id="copyBtn" class="icon-btn">copy invite link</button>
       </span>
       <button id="gearBtn" class="icon-btn" aria-label="settings">⚙ settings</button>
+      <button id="leaveBtn" class="icon-btn hidden">← menu</button>
     </div>
   </header>
 
   <section id="home">
     <label for="name">your name</label>
     <input id="name" maxlength="16" placeholder="name" autocomplete="off">
-    <button id="createBtn" class="primary">create room</button>
+    <button id="soloBtn" class="primary">solo</button>
+    <label>multiplayer</label>
+    <button id="createBtn">create room</button>
     <label for="code">or join a friend's room</label>
     <div class="row">
       <input id="code" maxlength="4" placeholder="CODE" autocomplete="off" style="text-transform:uppercase">
@@ -321,7 +324,7 @@ function makeGen(seed, cfg) {
 // ---------- room state ----------
 const PREFIX = "typerace-v1-";
 const ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ";
-let peer, isHost = false, hostConn = null, myId = null, roomCode = "";
+let peer, isHost = false, solo = false, hostConn = null, myId = null, roomCode = "";
 const conns = new Map();
 let players = {};
 let cfg = { mode: "time", time: 15, words: 50, punctuation: false, numbers: false };
@@ -339,6 +342,13 @@ function myName() {
   return n;
 }
 function homeErr(msg) { $("homeErr").textContent = msg; }
+$("soloBtn").onclick = () => {
+  solo = isHost = true; myId = "me";
+  players = { me: blankPlayer(myName()) };
+  enterRoom();
+  hostStart();
+};
+$("leaveBtn").onclick = () => { peer?.destroy(); location.href = location.pathname; };
 $("createBtn").onclick = () => createRoom(myName());
 $("joinBtn").onclick = () => joinRoom(myName(), $("code").value.trim().toUpperCase());
 $("code").onkeydown = e => { if (e.key === "Enter") $("joinBtn").click(); };
@@ -377,11 +387,16 @@ const blankPlayer = name => ({ name, progress: 0, wpm: 0, acc: 0, done: false, t
 function enterRoom() {
   $("home").classList.add("hidden");
   $("room").classList.remove("hidden");
-  $("roomInfo").classList.remove("hidden");
-  $("roomCode").textContent = roomCode;
-  history.replaceState(null, "", "#" + roomCode);
+  $("leaveBtn").classList.remove("hidden");
+  $("players").classList.toggle("hidden", solo);
+  if (!solo) {
+    $("roomInfo").classList.remove("hidden");
+    $("roomCode").textContent = roomCode;
+    history.replaceState(null, "", "#" + roomCode);
+  }
   setStatus(isHost ? "share the invite link, then start the race" : "waiting for the host to start");
-  $("footer").innerHTML = isHost ? "<kbd>enter</kbd> start race &nbsp; <kbd>esc</kbd> settings" : "<kbd>esc</kbd> settings";
+  $("footer").innerHTML = solo ? "<kbd>enter</kbd> restart &nbsp; <kbd>esc</kbd> settings"
+    : isHost ? "<kbd>enter</kbd> start race &nbsp; <kbd>esc</kbd> settings" : "<kbd>esc</kbd> settings";
   renderCfg(); renderPlayers(); showControls();
 }
 
@@ -394,7 +409,7 @@ $("copyBtn").onclick = () => {
 
 // ---------- race config bar ----------
 function renderCfg() {
-  const dis = !isHost || racing ? "disabled" : "";
+  const dis = !isHost || (racing && !solo) ? "disabled" : "";
   const pill = (on, attrs, label) => `<button class="pill ${on ? "on" : ""}" ${attrs} ${dis}>${label}</button>`;
   const amounts = cfg.mode === "time" ? [15, 30, 60, 120] : [10, 25, 50, 100];
   $("cfgBar").innerHTML = `
@@ -415,6 +430,7 @@ $("cfgBar").onclick = e => {
   try { localStorage.setItem("typerace-cfg", JSON.stringify(cfg)); } catch {}
   renderCfg();
   for (const c of conns.values()) c.send({ t: "cfg", cfg });
+  if (solo) { stopRace(); hostStart(); }   // like monkeytype: changing the mode restarts the test
 };
 
 // ---------- networking ----------
@@ -483,7 +499,7 @@ const setStatus = html => $("status").innerHTML = html;
 
 function showControls() {
   $("startBtn").classList.toggle("hidden", !isHost || racing);
-  $("endBtn").classList.toggle("hidden", !isHost || !racing);
+  $("endBtn").classList.toggle("hidden", !isHost || !racing || solo);
 }
 
 // ---------- race flow ----------
@@ -505,6 +521,13 @@ function beginCountdown(seed, c) {
   $("results").classList.add("hidden");
   $("miniTimer").textContent = ""; $("miniWpm").textContent = "";
   setupTyping(seed, c);
+  if (solo) {   // no countdown: the clock starts on the first keypress
+    setStatus("");
+    T.live = true;
+    $("box").focus();
+    updateMini(); updateKeymap();
+    return;
+  }
   let n = 3;
   clearInterval(countdownTimer);
   setStatus(`<span id="count">${n}</span>`);
@@ -521,11 +544,11 @@ function beginCountdown(seed, c) {
 }
 
 function tickClock() {
-  if (!T.live || T.done) return clearInterval(clockTimer);
+  if (!T.live || T.done || !T.start) return clearInterval(clockTimer);
   if (raceCfg.mode === "time" && performance.now() - T.start >= raceCfg.time * 1000) return finishTyping();
   updateMini();
 }
-setInterval(() => { if (T.live && !T.done) sendProgress(stats()); }, 1000);
+setInterval(() => { if (T.live && !T.done && T.start) sendProgress(stats()); }, 1000);
 
 function stopRace() {
   racing = false; T.live = false;
@@ -535,6 +558,16 @@ function stopRace() {
 
 function showResults() {
   const timeMode = raceCfg?.mode === "time";
+  if (solo) {
+    const p = players.me;
+    $("results").innerHTML = `<table><tr><th>wpm</th><th>accuracy</th><th>time</th></tr>
+      <tr><td class="big">${p.wpm}</td><td class="big">${p.acc}%</td><td class="big">${(p.time / 1000).toFixed(1)}s</td></tr></table>`;
+    $("results").classList.remove("hidden");
+    stopRace();
+    $("startBtn").textContent = "next test";
+    setStatus("");
+    return;
+  }
   const rows = Object.entries(players).sort(([, a], [, b]) =>
     timeMode ? b.wpm - a.wpm : (b.done - a.done) || (a.done ? a.time - b.time : b.progress - a.progress));
   $("results").innerHTML = `<table>
@@ -622,7 +655,7 @@ function correctChars() {
 }
 
 function stats() {
-  const ms = T.endMs || performance.now() - T.start;
+  const ms = T.endMs || (T.start ? performance.now() - T.start : 0);
   const cc = correctChars();
   const progress = raceCfg.mode === "time" ? Math.min(1, ms / (raceCfg.time * 1000)) : Math.min(1, cc / T.words.join(" ").length);
   return {
@@ -635,7 +668,7 @@ function stats() {
 
 function updateMini() {
   if (!T.live) return;
-  const ms = T.endMs || performance.now() - T.start;
+  const ms = T.endMs || (T.start ? performance.now() - T.start : 0);
   $("miniTimer").textContent = raceCfg.mode === "time"
     ? Math.max(0, Math.ceil(raceCfg.time - ms / 1000))
     : `${Math.min(T.wi, T.words.length)}/${T.words.length}`;
@@ -663,8 +696,15 @@ document.addEventListener("keydown", e => {
     return;
   }
   if (settingsOpen() || $("room").classList.contains("hidden")) return;
+  if (e.key === "Enter" && solo) { e.preventDefault(); stopRace(); return hostStart(); }
   if (e.key === "Enter" && isHost && !racing) { e.preventDefault(); return hostStart(); }
   if (!T.live || T.done || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (!T.start && (e.key.length === 1 && e.key !== " ")) {
+    T.start = performance.now();
+    clearInterval(clockTimer);
+    clockTimer = setInterval(tickClock, 100);
+  }
+  if (!T.start) return;
   if (document.activeElement !== $("box")) $("box").focus();
   document.body.classList.add("typing");
   clearTimeout(typingIdle);
