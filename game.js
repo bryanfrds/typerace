@@ -570,10 +570,12 @@ document.addEventListener("keydown", e => {
   sendProgress(stats());
 });
 
-const updateBlur = () => $("box").classList.toggle("blur", racing && !T.done && document.activeElement !== $("box") && !settingsOpen());
-$("box").addEventListener("focus", updateBlur);
-$("box").addEventListener("blur", updateBlur);
+// keys are read from the whole page, so only blur the text when the browser window itself loses focus
+const updateBlur = () => $("box").classList.toggle("blur", T.live && !T.done && !document.hasFocus() && !settingsOpen());
+addEventListener("focus", () => { updateBlur(); if (T.live) $("box").focus(); });
+addEventListener("blur", updateBlur);
 $("box").addEventListener("click", () => $("box").focus());
-setInterval(updateBlur, 300);
+// a clicked button keeps focus, and space/enter would press it again while typing
+document.addEventListener("click", e => { if (e.target.closest("button") && racing) $("box").focus(); });
 
 applySettings();
