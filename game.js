@@ -443,18 +443,20 @@ len: equ $ - msg`,
     inc rsi
     jmp .next
 .diff:
-    mov rax, 1
+    movzx rax, al
+    movzx rcx, byte [rsi]
+    sub rax, rcx
     ret
 .same:
     xor rax, rax
     ret`,
 `    cmp rdi, rsi
-    jle .use_rsi
+    jle use_rsi
     mov rax, rdi
-    jmp .done
-.use_rsi:
+    jmp done
+use_rsi:
     mov rax, rsi
-.done:
+done:
     ret`,
 `memcpy:
     mov rcx, rdx
@@ -481,10 +483,10 @@ len: equ $ - msg`,
     pop rsi
     pop rdi
     test rax, rax
-    jz .failed
+    jz failed
     mov [rdi], rax
     ret
-.failed:
+failed:
     mov rax, -1
     ret`,
 `count_bits:
