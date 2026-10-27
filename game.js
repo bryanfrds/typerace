@@ -151,6 +151,7 @@ function makeGen(seed, cfg) {
 
 // ---------- room state ----------
 const PREFIX = "typerace-v1-";
+const HOSTING_KEY = "typerace-hosting";
 const ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 let peer, isHost = false, solo = false, hostConn = null, myId = null, roomCode = "";
 const conns = new Map();
@@ -162,6 +163,7 @@ function loadCfg() {
 }
 loadCfg();
 let racing = false, raceCfg = null, raceIds = new Set();
+let joined = false;   // we got into the room at least once, so going home can offer a way back
 
 // ---------- home ----------
 try { $("name").value = localStorage.getItem("typerace-name") || ""; } catch {}
@@ -192,6 +194,15 @@ $("joinBtn").onclick = () => {
   if (!/^[A-Z]{4}$/.test(code)) return homeErr("room codes are 4 letters");   // check before dropping the current room
   leaveRoom(); joinRoom(myName(), code);
 };
+$("hostInsteadBtn").onclick = () => {
+  const code = $("hostInsteadBtn").dataset.code;
+  leaveRoom(); createRoom(myName(), code);
+};
+function offerHosting(code) {
+  $("hostInsteadBtn").dataset.code = code;
+  $("hostInsteadBtn").textContent = `host room ${code} instead`;
+  $("hostInsteadBtn").classList.remove("hidden");
+}
 $("code").onkeydown = e => { if (e.key === "Enter") $("joinBtn").click(); };
 $("name").onkeydown = e => {
   if (e.key !== "Enter") return;
@@ -200,36 +211,88 @@ $("name").onkeydown = e => {
 };
 const randomCode = () => Array.from({ length: 4 }, () => ALPHA[Math.floor(Math.random() * ALPHA.length)]).join("");
 
-function createRoom(name, tries = 0) {
-  homeErr("creating room…");
-  roomCode = randomCode();
-  peer = new Peer(PREFIX + roomCode);
-  peer.on("open", id => { isHost = true; myId = id; players = { [id]: blankPlayer(name) }; enterRoom(); });
-  peer.on("connection", onGuest);
-  peer.on("error", err => {
-    if (err.type === "unavailable-id" && tries < 5) { peer.destroy(); return createRoom(name, tries + 1); }
-    homeErr("couldn't create room: " + err.type);
+// a refreshed host can take its own code back, so the room survives a reload
+function rememberHosting(code) {
+  try { code ? localStorage.setItem(HOSTING_KEY, JSON.stringify({ code, at: Date.now() })) : localStorage.removeItem(HOSTING_KEY); } catch {}
+}
+function hostedCode() {
+  try {
+    const h = JSON.parse(localStorage.getItem(HOSTING_KEY) || "null");
+    return h && Date.now() - h.at < 60 * 60 * 1000 ? h.code : null;   // an hour old is someone else's room by now
+  } catch { return null; }
+}
+
+function createRoom(name, code = null, tries = 0) {
+  $("hostInsteadBtn").classList.add("hidden");
+  homeErr(code ? `reopening room ${code}…` : "creating room…");
+  roomCode = code || randomCode();
+  const p = peer = new Peer(PREFIX + roomCode);
+  p.on("open", id => {
+    if (p !== peer) return;
+    isHost = true; myId = id; players = { [id]: blankPlayer(name) };
+    rememberHosting(roomCode); homeErr(""); enterRoom();
+  });
+  p.on("connection", onGuest);
+  p.on("error", err => {
+    if (p !== peer || err.type !== "unavailable-id") return homeErr(p === peer && !isHost ? "couldn't create room: " + err.type : "");
+    // the broker can hold a refreshed host's old id for a moment, so wait and try again
+    if (code && tries < 6) { p.destroy(); peer = null; return setTimeout(() => createRoom(name, code, tries + 1), 1000); }
+    if (!code && tries < 5) { p.destroy(); peer = null; return createRoom(name, null, tries + 1); }
+    p.destroy(); peer = null; roomCode = "";
+    homeErr(code ? `room ${code} is already open in another tab` : "couldn't create room: " + err.type);
   });
 }
 
+let rejoinTimer = null, rejoinTries = 0;
+
 function joinRoom(name, code) {
   if (!/^[A-Z]{4}$/.test(code)) return homeErr("room codes are 4 letters");
+  $("hostInsteadBtn").classList.add("hidden");
   homeErr("joining…");
-  roomCode = code;
-  peer = new Peer();
-  peer.on("open", id => {
-    myId = id;
-    const conn = hostConn = peer.connect(PREFIX + code, { reliable: true });
-    conn.on("open", () => { conn.send({ t: "hello", name }); enterRoom(); });
-    conn.on("data", onHostMsg);
-    conn.on("close", () => {
-      if (conn !== hostConn) return;
-      hostConn = null;
-      if ($("room").classList.contains("hidden")) { leaveRoom(); return homeErr("the host left the room"); }
-      setStatus("the host left the room"); stopRace();
-    });
+  roomCode = code; rejoinTries = 0;
+  const p = peer = new Peer();
+  p.on("open", () => { if (p !== peer) return; myId = p.id; connectToHost(name); });
+  p.on("error", err => {
+    if (p !== peer) return;
+    if (err.type !== "peer-unavailable") return homeErr("couldn't join: " + err.type);
+    if (rejoinTries) return retryJoin(name);   // the host may just be reloading
+    homeErr(`no one is hosting room ${code}`);
+    offerHosting(code);
   });
-  peer.on("error", err => homeErr(err.type === "peer-unavailable" ? "no room with that code" : "couldn't join: " + err.type));
+}
+
+function connectToHost(name) {
+  if (!peer || !roomCode) return;
+  const conn = hostConn = peer.connect(PREFIX + roomCode, { reliable: true });
+  conn.on("open", () => {
+    if (conn !== hostConn) return;
+    rejoinTries = 0; homeErr("");
+    conn.send({ t: "hello", name });
+    if (!joined) return enterRoom();
+    if ($("room").classList.contains("hidden")) { showBackRow(); return homeErr(`back in room ${roomCode}`); }
+    setStatus("back in the room"); renderPlayers();
+  });
+  conn.on("data", onHostMsg);
+  conn.on("close", () => {
+    if (conn !== hostConn) return;
+    hostConn = null;
+    stopRace();
+    retryJoin(name);   // most likely the host refreshed; wait for them to come back
+  });
+}
+
+// the host's page reload drops every guest, so keep knocking for a while before giving up
+function retryJoin(name) {
+  clearTimeout(rejoinTimer);
+  if (!peer || !roomCode || isHost) return;
+  if (++rejoinTries > 20) {
+    if ($("room").classList.contains("hidden")) { const c = roomCode; leaveRoom(); homeErr(`the host left room ${c}`); offerHosting(c); }
+    else setStatus("the host left the room");
+    return;
+  }
+  const msg = `the host left — reconnecting… (${rejoinTries}/20)`;
+  if ($("room").classList.contains("hidden")) { $("backRow").classList.add("hidden"); homeErr(msg); } else setStatus(msg);
+  rejoinTimer = setTimeout(() => connectToHost(name), 3000);
 }
 
 const blankPlayer = name => ({ name, progress: 0, wpm: 0, acc: 0, done: false, time: 0 });
@@ -253,24 +316,29 @@ function goHome() {
   $("home").classList.remove("hidden");
   $("leaveBtn").classList.add("hidden");
   $("roomInfo").classList.add("hidden");
-  if (roomCode) {
-    $("backBtn").textContent = `back to room ${roomCode}`;
-    $("backRow").classList.remove("hidden");
-  }
+  showBackRow();
+}
+
+function showBackRow() {
+  if (!roomCode || !joined || (!isHost && !hostConn)) return $("backRow").classList.add("hidden");
+  $("backBtn").textContent = `back to room ${roomCode}`;
+  $("backRow").classList.remove("hidden");
 }
 
 function leaveRoom() {
   stopRace();
+  if (isHost) rememberHosting(null);
   // destroy() fires close events right away; clear these first so the handlers see no room
   const old = peer;
-  peer = hostConn = null; conns.clear(); clearTimeout(bcTimer);
+  peer = hostConn = null; conns.clear(); clearTimeout(bcTimer); clearTimeout(rejoinTimer); rejoinTries = 0;
   old?.destroy();
-  players = {}; isHost = solo = false; myId = null; roomCode = ""; raceCfg = null;
+  players = {}; isHost = solo = false; myId = null; roomCode = ""; raceCfg = null; joined = false;
   loadCfg();   // a guest's cfg was overwritten by the host's
   Object.assign(T, { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen: null, endMs: 0 });
   $("words").innerHTML = "";
   $("miniTimer").textContent = ""; $("miniWpm").textContent = "";
   $("backRow").classList.add("hidden");
+  $("hostInsteadBtn").classList.add("hidden");
   $("results").classList.add("hidden");
   $("startBtn").textContent = "start race";
   homeErr("");
@@ -278,6 +346,7 @@ function leaveRoom() {
 }
 
 function enterRoom() {
+  joined = true;
   showRoom();
   $("players").classList.toggle("hidden", solo);
   if (!solo) {
@@ -641,3 +710,6 @@ $("box").addEventListener("click", () => $("box").focus());
 document.addEventListener("click", e => { if (e.target.closest("button") && racing) $("box").focus(); });
 
 applySettings();
+
+// a host who refreshes gets their own room back, so nobody has to rejoin
+if (/^[A-Z]{4}$/.test(hashCode) && hostedCode() === hashCode) createRoom(myName(), hashCode);
