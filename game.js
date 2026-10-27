@@ -244,7 +244,11 @@ function createRoom(name, code = null, tries = 0) {
   p.on("open", id => {
     if (p !== peer) return p.destroy();   // superseded: don't sit on the broker holding a room id
     // open fires again after a reconnect, and the room must survive that untouched
-    if (isHost && myId === id) return setStatus("back online — friends can join again");
+    if (isHost && myId === id) {
+      homeErr("");
+      if (!racing) setStatus("back online — friends can join again");   // never over a countdown or a race
+      return;
+    }
     isHost = true; myId = id; players = { [id]: blankPlayer(name) };
     rememberHosting(roomCode); homeErr(""); enterRoom();
   });
@@ -254,8 +258,10 @@ function createRoom(name, code = null, tries = 0) {
     if (err.type !== "unavailable-id") {
       // PeerJS has already given up on this peer, so the room is finished
       if (isHost) {   // the room keeps working; only new guests need the server
+        if (err.type !== "network" && err.type !== "disconnected") return setStatus("lost the connection to the server — nobody new can join");
         setTimeout(() => reconnectPeer(p), 0);
-        return setStatus("lost the connection to the server — reconnecting…");
+        if (!racing) setStatus("lost the connection to the server — reconnecting…");
+        return;
       }
       p.destroy(); peer = null; roomCode = "";
       return homeErr("couldn't create room: " + err.type);
@@ -305,8 +311,8 @@ function joinRoom(name, code) {
 
 function connectToHost(name) {
   if (!peer || !roomCode || isHost) return;
-  clearTimeout(connTimer); clearTimeout(rejoinTimer);   // this attempt replaces any pending one
   if (peer.destroyed) return;
+  clearTimeout(connTimer); clearTimeout(rejoinTimer);   // this attempt replaces any pending one
   if (peer.disconnected) { reconnectPeer(peer); return retryJoin(name); }   // connect() would just return nothing
   const stale = hostConn; hostConn = null; stale?.close();   // don't leave half-open attempts behind
   const conn = hostConn = peer.connect(PREFIX + roomCode, { reliable: true });

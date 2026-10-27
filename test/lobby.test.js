@@ -151,6 +151,35 @@ const vis = (p, sel) => p.isVisible(sel);
   check("guest keeps its results while reconnecting", sawReconnect && await vis(g2, "#results"), sawReconnect ? "" : "never saw the reconnect");
   await h2.waitForSelector("#room:not(.hidden)", { timeout: 30000 });
 
+  // --- losing only the signalling server must not disturb a working room ---
+  // Chromium's offline mode tears the peer link down too, so it can't produce this case.
+  // Instead fire the broker's own "disconnected" event, which is exactly what PeerJS
+  // reacts to when the websocket drops, leaving the data channel between players alone.
+  await g2.waitForFunction(() => document.querySelectorAll("#players .p").length === 2, null, { timeout: 20000 });
+  const drop = p => p.evaluate(() => peer.socket.emit("disconnected"));
+
+  await drop(g2);
+  await g2.waitForTimeout(2000);
+  check("guest keeps its link to the host when the broker drops", await g2.evaluate(() => !!hostConn?.open));
+  check("guest stays in the room", await vis(g2, "#room") && !(await vis(g2, "#home")));
+  check("guest is not told the host left", !/host left|reconnecting/.test(await g2.textContent("#status")));
+  check("guest still sees both players", (await g2.$$("#players .p")).length === 2);
+
+  await drop(h2);
+  await h2.waitForFunction(() => /lost the connection/.test(document.getElementById("status").textContent), null, { timeout: 10000 })
+    .then(() => check("host says it lost the server", true), () => check("host says it lost the server", false));
+  check("host keeps its room code and players", (await h2.textContent("#roomCode")).trim() === code2 && (await h2.$$("#players .p")).length === 2);
+  await h2.waitForFunction(() => /back online/.test(document.getElementById("status").textContent), null, { timeout: 30000 })
+    .then(() => check("host reconnects to the server by itself", true), () => check("host reconnects to the server by itself", false));
+  check("room survived the whole blip", (await h2.$$("#players .p")).length === 2 && (await h2.textContent("#roomCode")).trim() === code2);
+
+  // a new player can still join after that reconnect
+  const g5 = await (await browser.newContext()).newPage();
+  await g5.goto(URL + "#" + code2); await g5.fill("#name", "late"); await g5.click("#joinBtn");
+  await g5.waitForSelector("#room:not(.hidden)", { timeout: 25000 })
+    .then(() => check("someone new can join after the reconnect", true), () => check("someone new can join after the reconnect", false));
+  await g5.context().close();
+
   // guest refresh: rejoins via the invite link
   await g2.reload();
   await g2.click("#joinBtn");
