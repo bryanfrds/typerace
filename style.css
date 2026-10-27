@@ -58,6 +58,14 @@ body.tape #words { flex-wrap:nowrap; width:max-content; }
 #box .hint { position:absolute; inset:0; display:none; align-items:center; justify-content:center; color:var(--text); font-size:16px; }
 #box.blur .hint { display:flex; }
 .w { margin-right:.55em; color:var(--sub); white-space:nowrap; }
+/* code mode: real lines, and an indent you never have to type */
+.cline { display:flex; flex-wrap:nowrap; width:100%; }
+.cline .ind { white-space:pre; color:var(--sub-alt); }
+body.code #box { font-size:calc(var(--size) * .45); height:calc(9 * 1.6em);
+  font-family:"JetBrains Mono", ui-monospace, monospace;
+  font-variant-ligatures:none; }   /* => must look like the two keys you press */
+body.code #words { flex-direction:column; flex-wrap:nowrap; align-items:flex-start; }
+body.code .cline { flex-wrap:wrap; }
 .w .ok { color:var(--text); }
 body.flip .w { color:var(--text); }
 body.flip .w .ok { color:var(--sub); }
