@@ -53,7 +53,14 @@ async function typeLines(page, nLines) {
   await page.click('[data-c="mode"][data-v="words"]');
   await page.click('[data-c="amount"][data-v="5"]');
   await page.waitForTimeout(300);
-  check("lines amount is used", /lines/.test(await page.textContent("#cfgBar")));
+  check("5 lines means 5 lines", (await page.evaluate(() => T.lines.length)) === 5, (await page.evaluate(() => T.lines.length)) + " lines");
+  for (const n of [10, 20, 40]) {
+    await page.click(`[data-c="amount"][data-v="${n}"]`);
+    await page.waitForTimeout(250);
+    check(`${n} lines means ${n} lines`, (await page.evaluate(() => T.lines.length)) === n, (await page.evaluate(() => T.lines.length)) + " lines");
+  }
+  await page.click('[data-c="amount"][data-v="5"]');
+  await page.waitForTimeout(250);
 
   // type it correctly and check the result
   await page.click("#box");
@@ -84,17 +91,21 @@ async function typeLines(page, nLines) {
   await page.keyboard.press("Enter");
   await page.waitForTimeout(150);
   check("enter at end of line advances", (await page.evaluate(() => T.wi)) === before + 1);
-  check("enter mid-line does nothing", await page.evaluate(async () => {
-    const w = T.wi; const t = T.words[w];
-    return !T.last[w] ? (document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })), T.wi === w) : true;
-  }));
+  // park on a line with more than one token, so mid-line really is mid-line
+  const parked = await page.evaluate(() => {
+    while (T.wi < T.words.length - 1 && T.lines[T.lineOf[T.wi]].tokens.length < 2) { T.typed[T.wi] = T.words[T.wi]; T.wi++; }
+    return { wi: T.wi, last: T.last[T.wi], tokens: T.lines[T.lineOf[T.wi]].tokens.length };
+  });
+  check("found a multi-token line to test mid-line enter", parked.tokens >= 2 && !parked.last);
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(150);
+  check("enter mid-line does nothing", (await page.evaluate(() => T.wi)) === parked.wi);
 
   // tab restarts in code mode
-  const beforeTab = await page.evaluate(() => T.words.join(" "));
   await page.keyboard.press("Tab");
   await page.waitForTimeout(500);
-  check("tab restarts the code test", (await page.evaluate(() => T.wi)) === 0);
-  check("tab gives fresh text", (await page.evaluate(() => T.words.join(" "))) !== beforeTab || true);
+  const afterTab = await page.evaluate(() => ({ wi: T.wi, input: T.input, typed: T.typed.length, lines: T.lines.length, live: T.live }));
+  check("tab restarts the code test", afterTab.wi === 0 && afterTab.input === "" && afterTab.typed === 0 && afterTab.live && afterTab.lines > 0);
 
   // python
   await page.click('[data-c="lang"][data-v="python"]');
@@ -108,6 +119,16 @@ async function typeLines(page, nLines) {
   await page.waitForTimeout(500);
   check("turning code off returns to words", (await page.$$("#words .cline")).length === 0 && (await page.$$("#words .w")).length > 0);
   check("tape mode comes back", await page.evaluate(() => document.body.classList.contains("tape")));
+  // a host on the pre-code build sends a cfg with no code settings; merging keeps ours usable
+  await page.evaluate(() => onHostMsg({ t: "cfg", cfg: { mode: "words", time: 15, words: 50, punctuation: false, numbers: false } }));
+  await page.click('[data-c="code"]');
+  await page.waitForTimeout(500);
+  check("an old peer's settings still give a real test", await page.evaluate(() => T.lines.length > 0 && T.words.length > 0),
+    await page.evaluate(() => T.lines.length + " lines"));
+  await page.click("#box");
+  await page.keyboard.type("x", { delay: 5 });
+  await page.waitForTimeout(150);
+
   check("no page errors", errs.length === 0, errs.join(" | "));
 
   // multiplayer: both players must get byte-identical code from the same seed

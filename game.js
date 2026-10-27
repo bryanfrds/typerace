@@ -273,7 +273,8 @@ function makeCodeGen(seed, cfg) {
   const rng = mulberry32(seed);
   const snips = SNIPPETS[cfg.lang] || SNIPPETS[LANGS[0]];
   let bag = [];
-  return nLines => {
+  return n => {
+    const nLines = Math.max(1, Math.floor(n) || 10);   // a peer on an older build may send no line count
     const out = [];
     while (out.length < nLines) {
       if (!bag.length) bag = shuffled(snips.slice(), rng);
@@ -281,7 +282,7 @@ function makeCodeGen(seed, cfg) {
         if (l.trim()) out.push({ indent: l.match(/^[ \t]*/)[0], text: l.trim() });
       }
     }
-    return out;
+    return out.slice(0, nLines);   // whole snippets overshoot; 5 lines has to mean 5
   };
 }
 
@@ -672,7 +673,11 @@ function broadcastPlayers(now) {
 
 function onHostMsg(msg) {
   if (msg.t === "players") { players = msg.players; renderPlayers(); }
-  else if (msg.t === "cfg") { cfg = msg.cfg; renderCfg(); }
+  else if (msg.t === "cfg") {   // merge: a host on an older build sends no code settings at all
+    cfg = { ...cfg, ...msg.cfg };
+    if (!SNIPPETS[cfg.lang]) cfg.lang = LANGS[0];
+    renderCfg(); applyMode();
+  }
   else if (msg.t === "start") beginCountdown(msg.seed, msg.cfg);
   else if (msg.t === "over") { players = msg.players; showResults(); }
 }
@@ -940,7 +945,8 @@ document.addEventListener("keydown", e => {
   }
   if (settingsOpen() || $("room").classList.contains("hidden")) return;
   const codeLive = T.code && T.live && !T.done;   // enter is a newline then, so tab restarts instead
-  if (e.key === "Tab" && T.code && solo) { e.preventDefault(); stopRace(); return hostStart(); }
+  // only while a code test is on screen, so tab still reaches the buttons otherwise
+  if (e.key === "Tab" && T.code && solo && (T.live || T.done)) { e.preventDefault(); stopRace(); return hostStart(); }
   if (e.key === "Enter" && !codeLive && solo) { e.preventDefault(); stopRace(); return hostStart(); }
   if (e.key === "Enter" && !codeLive && isHost && !racing) { e.preventDefault(); return hostStart(); }
   if (!T.live || T.done || e.ctrlKey || e.metaKey || e.altKey) return;
