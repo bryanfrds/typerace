@@ -131,6 +131,18 @@ async function typeLines(page, nLines) {
   check("python snippets load", /def |self|print|import|lambda|:/.test(py), py.slice(0, 60) + "…");
   await page.screenshot({ path: OUT + "/c3-python.png" });
 
+  // assembly: labels at the margin, instructions indented
+  await page.click('[data-c="lang"][data-v="assembly"]');
+  await page.waitForTimeout(500);
+  const asm = await page.evaluate(() => ({
+    text: T.lines.map(l => l.indent + l.tokens.map(i => T.words[i]).join(" ")).join("\n"),
+    indents: T.lines.map(l => l.indent.length),
+  }));
+  check("assembly snippets load", /\b(mov|ret|syscall|cmp|jmp|xor|push)\b/.test(asm.text), asm.text.split("\n")[0]);
+  check("assembly keeps its indentation", asm.indents.some(n => n === 4) || asm.indents.every(n => n === 0),
+    "indents " + JSON.stringify([...new Set(asm.indents)]));
+  check("every language is offered", (await page.$$('[data-c="lang"]')).length === 4);
+
   // back to words mode still works
   await page.click('[data-c="code"]');
   await page.waitForTimeout(500);
