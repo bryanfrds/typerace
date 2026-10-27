@@ -151,6 +151,7 @@ function makeGen(seed, cfg) {
 
 // ---------- room state ----------
 const PREFIX = "typerace-v1-";
+const HOSTING_KEY = "typerace-hosting";
 const ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 let peer, isHost = false, solo = false, hostConn = null, myId = null, roomCode = "";
 const conns = new Map();
@@ -162,6 +163,7 @@ function loadCfg() {
 }
 loadCfg();
 let racing = false, raceCfg = null, raceIds = new Set();
+let joined = false;   // we got into the room at least once, so going home can offer a way back
 
 // ---------- home ----------
 try { $("name").value = localStorage.getItem("typerace-name") || ""; } catch {}
@@ -173,7 +175,9 @@ function myName() {
   try { localStorage.setItem("typerace-name", n); } catch {}
   return n;
 }
-function homeErr(msg) { $("homeErr").textContent = msg; }
+function homeErr(msg) { $("homeErr").textContent = msg; $("homeErr").classList.remove("info"); }
+function info(msg) { $("homeErr").textContent = msg; $("homeErr").classList.add("info"); }   // progress, not a failure
+const say = msg => $("room").classList.contains("hidden") ? homeErr(msg) : setStatus(msg);
 $("soloBtn").onclick = () => {
   leaveRoom();
   solo = isHost = true; myId = "me";
@@ -192,6 +196,16 @@ $("joinBtn").onclick = () => {
   if (!/^[A-Z]{4}$/.test(code)) return homeErr("room codes are 4 letters");   // check before dropping the current room
   leaveRoom(); joinRoom(myName(), code);
 };
+$("hostInsteadBtn").onclick = () => {
+  const code = ($("hostInsteadBtn").dataset.code || "").toUpperCase();
+  if (!/^[A-Z]{4}$/.test(code)) return;
+  leaveRoom(); createRoom(myName(), code);
+};
+function offerHosting(code) {
+  $("hostInsteadBtn").dataset.code = code;
+  $("hostInsteadBtn").textContent = `host room ${code} instead`;
+  $("hostInsteadBtn").classList.remove("hidden");
+}
 $("code").onkeydown = e => { if (e.key === "Enter") $("joinBtn").click(); };
 $("name").onkeydown = e => {
   if (e.key !== "Enter") return;
@@ -200,36 +214,147 @@ $("name").onkeydown = e => {
 };
 const randomCode = () => Array.from({ length: 4 }, () => ALPHA[Math.floor(Math.random() * ALPHA.length)]).join("");
 
-function createRoom(name, tries = 0) {
-  homeErr("creating room…");
-  roomCode = randomCode();
-  peer = new Peer(PREFIX + roomCode);
-  peer.on("open", id => { isHost = true; myId = id; players = { [id]: blankPlayer(name) }; enterRoom(); });
-  peer.on("connection", onGuest);
-  peer.on("error", err => {
-    if (err.type === "unavailable-id" && tries < 5) { peer.destroy(); return createRoom(name, tries + 1); }
-    homeErr("couldn't create room: " + err.type);
+// a refreshed host can take its own code back, so the room survives a reload
+function rememberHosting(code) {
+  try { code ? localStorage.setItem(HOSTING_KEY, JSON.stringify({ code, at: Date.now() })) : localStorage.removeItem(HOSTING_KEY); } catch {}
+}
+function hostedCode() {
+  try {
+    const h = JSON.parse(localStorage.getItem(HOSTING_KEY) || "null");
+    return h && Date.now() - h.at < 60 * 60 * 1000 ? h.code : null;   // an hour old is someone else's room by now
+  } catch { return null; }
+}
+
+// every room change bumps this, so a timer from an abandoned attempt does nothing
+let roomGen = 0, createTimer = null, rejoinTimer = null, connTimer = null, rejoinTries = 0, everOpen = false;
+const REJOINS = 20;
+
+function clearTimers() { clearTimeout(createTimer); clearTimeout(rejoinTimer); clearTimeout(connTimer); }
+
+// PeerJS throws unless it really is disconnected, and a throw here would unwind its own handler
+function reconnectPeer(p) { try { if (p === peer && p.disconnected && !p.destroyed) p.reconnect(); } catch {} }
+
+function createRoom(name, code = null, tries = 0) {
+  clearTimers();
+  const g = ++roomGen;
+  $("hostInsteadBtn").classList.add("hidden");
+  info(code ? `reopening room ${code}…` : "creating room…");
+  roomCode = code || randomCode();
+  const p = peer = new Peer(PREFIX + roomCode);
+  p.on("open", id => {
+    if (p !== peer) return p.destroy();   // superseded: don't sit on the broker holding a room id
+    // open fires again after a reconnect, and the room must survive that untouched
+    if (isHost && myId === id) {
+      homeErr("");
+      if (!racing) setStatus("back online — friends can join again");   // never over a countdown or a race
+      return;
+    }
+    isHost = true; myId = id; players = { [id]: blankPlayer(name) };
+    rememberHosting(roomCode); homeErr(""); enterRoom();
+  });
+  p.on("connection", onGuest);
+  p.on("error", err => {
+    if (p !== peer) return p.destroy();
+    if (err.type !== "unavailable-id") {
+      // PeerJS has already given up on this peer, so the room is finished
+      if (isHost) {   // the room keeps working; only new guests need the server
+        if (err.type !== "network" && err.type !== "disconnected") return setStatus("lost the connection to the server — nobody new can join");
+        setTimeout(() => reconnectPeer(p), 0);
+        if (!racing) setStatus("lost the connection to the server — reconnecting…");
+        return;
+      }
+      p.destroy(); peer = null; roomCode = "";
+      return homeErr("couldn't create room: " + err.type);
+    }
+    p.destroy(); peer = null;
+    // the broker holds a reloaded host's old id for a moment, so wait and try again
+    if (code && tries < 6) { createTimer = setTimeout(() => { if (g === roomGen) createRoom(name, code, tries + 1); }, 1000); return; }
+    if (!code && tries < 5) return createRoom(name, null, tries + 1);
+    roomCode = "";
+    if (!code) return homeErr("couldn't create room: " + err.type);
+    joinRoom(name, code);   // a friend revived it while we were away, so join theirs
+    info(`someone else is hosting room ${code} — joining it`);
   });
 }
 
 function joinRoom(name, code) {
   if (!/^[A-Z]{4}$/.test(code)) return homeErr("room codes are 4 letters");
-  homeErr("joining…");
-  roomCode = code;
-  peer = new Peer();
-  peer.on("open", id => {
-    myId = id;
-    const conn = hostConn = peer.connect(PREFIX + code, { reliable: true });
-    conn.on("open", () => { conn.send({ t: "hello", name }); enterRoom(); });
-    conn.on("data", onHostMsg);
-    conn.on("close", () => {
-      if (conn !== hostConn) return;
-      hostConn = null;
-      if ($("room").classList.contains("hidden")) { leaveRoom(); return homeErr("the host left the room"); }
-      setStatus("the host left the room"); stopRace();
-    });
+  clearTimers();
+  ++roomGen;
+  $("hostInsteadBtn").classList.add("hidden");
+  info("joining…");
+  roomCode = code; rejoinTries = 0; everOpen = false;
+  const p = peer = new Peer();
+  p.on("open", () => {
+    if (p !== peer) return p.destroy();
+    myId = p.id;
+    if (hostConn?.open) return;   // a reconnect to the broker; our link to the host is fine as it is
+    connectToHost(name);
   });
-  peer.on("error", err => homeErr(err.type === "peer-unavailable" ? "no room with that code" : "couldn't join: " + err.type));
+  p.on("error", err => {
+    if (p !== peer) return p.destroy();
+    if (err.type === "peer-unavailable") {
+      if (everOpen) return retryJoin(name);   // we were in this room, so the host is probably reloading
+      clearTimers();                          // nobody has ever answered on this code; stop knocking
+      homeErr(`no one is hosting room ${code}`);
+      return offerHosting(code);
+    }
+    if (err.type === "network" || err.type === "disconnected") {   // a blip, not a dead room
+      // PeerJS reports this before it marks itself disconnected, so reconnect on the next tick
+      setTimeout(() => reconnectPeer(p), 0);
+      if (hostConn?.open) return;   // the broker is gone but our link to the host isn't: say nothing
+      return retryJoin(name);
+    }
+    say("couldn't join: " + err.type);   // tell them wherever they are looking
+  });
+}
+
+function connectToHost(name) {
+  if (!peer || !roomCode || isHost) return;
+  if (peer.destroyed) return;
+  clearTimeout(connTimer); clearTimeout(rejoinTimer);   // this attempt replaces any pending one
+  if (peer.disconnected) { reconnectPeer(peer); return retryJoin(name); }   // connect() would just return nothing
+  const stale = hostConn; hostConn = null; stale?.close();   // don't leave half-open attempts behind
+  const conn = hostConn = peer.connect(PREFIX + roomCode, { reliable: true });
+  if (!conn) return retryJoin(name);
+  const g = roomGen;
+  conn.on("open", () => {
+    if (conn !== hostConn) return conn.close();
+    clearTimeout(connTimer);
+    rejoinTries = 0; everOpen = true; homeErr("");
+    conn.send({ t: "hello", name });
+    if (!joined) return enterRoom();
+    if ($("room").classList.contains("hidden")) { showBackRow(); return info(`back in room ${roomCode}`); }
+    setStatus("back in the room"); renderPlayers();
+  });
+  conn.on("data", m => { if (conn === hostConn) onHostMsg(m); });
+  conn.on("close", () => {
+    if (conn !== hostConn) return;
+    hostConn = null; clearTimeout(connTimer);
+    stopRace(); clearRaceView(true);   // that race is over for us, but leave any results on screen
+    retryJoin(name);   // most likely the host refreshed; wait for them to come back
+  });
+  // an attempt can hang with neither open nor close, so keep the budget moving
+  connTimer = setTimeout(() => {
+    if (g !== roomGen || conn !== hostConn) return;
+    hostConn = null; conn.close(); retryJoin(name);
+  }, 5000);
+}
+
+// the host's page reload drops every guest, so keep knocking for a while before giving up
+function retryJoin(name) {
+  clearTimeout(rejoinTimer); clearTimeout(connTimer);   // one attempt costs one try, however it failed
+  if (!peer || !roomCode || isHost) return;
+  const g = roomGen;
+  if (++rejoinTries > REJOINS) {
+    const c = roomCode;
+    if ($("room").classList.contains("hidden")) { leaveRoom(); homeErr(`the host left room ${c}`); offerHosting(c); }
+    else setStatus("the host left the room");
+    return;
+  }
+  const msg = `${joined ? "the host left — reconnecting" : "connecting"}… (${rejoinTries}/${REJOINS})`;
+  if ($("room").classList.contains("hidden")) { $("backRow").classList.add("hidden"); info(msg); } else setStatus(msg);
+  rejoinTimer = setTimeout(() => { if (g === roomGen) connectToHost(name); }, 3000);
 }
 
 const blankPlayer = name => ({ name, progress: 0, wpm: 0, acc: 0, done: false, time: 0 });
@@ -248,36 +373,48 @@ function goHome() {
   if ($("room").classList.contains("hidden")) return;
   // typing is ignored on the home screen, so leaving mid-race would stall it for everyone
   if (racing && !solo && !T.done) return setStatus(isHost ? "finish or end the race before going home" : "finish the race before going home");
-  if (solo || (!isHost && !hostConn)) leaveRoom();   // nothing to keep: solo, or the host already left
+  if (solo || (!isHost && !hostConn && !rejoinTries)) leaveRoom();   // nothing to keep: solo, or the host is gone for good
   $("room").classList.add("hidden");
   $("home").classList.remove("hidden");
   $("leaveBtn").classList.add("hidden");
   $("roomInfo").classList.add("hidden");
-  if (roomCode) {
-    $("backBtn").textContent = `back to room ${roomCode}`;
-    $("backRow").classList.remove("hidden");
-  }
+  showBackRow();
+}
+
+function showBackRow() {
+  if (!roomCode || !joined || (!isHost && !hostConn)) return $("backRow").classList.add("hidden");
+  $("backBtn").textContent = `back to room ${roomCode}`;
+  $("backRow").classList.remove("hidden");
+}
+
+function clearRaceView(keepResults) {
+  Object.assign(T, { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen: null, endMs: 0 });
+  raceCfg = null;
+  $("words").innerHTML = "";
+  $("miniTimer").textContent = ""; $("miniWpm").textContent = "";
+  if (!keepResults) $("results").classList.add("hidden");
 }
 
 function leaveRoom() {
   stopRace();
+  if (isHost) rememberHosting(null);
   // destroy() fires close events right away; clear these first so the handlers see no room
   const old = peer;
   peer = hostConn = null; conns.clear(); clearTimeout(bcTimer);
+  clearTimers(); rejoinTries = 0; everOpen = false; ++roomGen;
   old?.destroy();
-  players = {}; isHost = solo = false; myId = null; roomCode = ""; raceCfg = null;
+  players = {}; isHost = solo = false; myId = null; roomCode = ""; joined = false;
   loadCfg();   // a guest's cfg was overwritten by the host's
-  Object.assign(T, { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen: null, endMs: 0 });
-  $("words").innerHTML = "";
-  $("miniTimer").textContent = ""; $("miniWpm").textContent = "";
+  clearRaceView();
   $("backRow").classList.add("hidden");
-  $("results").classList.add("hidden");
+  $("hostInsteadBtn").classList.add("hidden");
   $("startBtn").textContent = "start race";
   homeErr("");
   history.replaceState(null, "", location.pathname);
 }
 
 function enterRoom() {
+  joined = true;
   showRoom();
   $("players").classList.toggle("hidden", solo);
   if (!solo) {
@@ -327,17 +464,27 @@ $("cfgBar").onclick = e => {
 function onGuest(conn) {
   conn.on("data", msg => {
     if (msg.t === "hello") {
-      conns.set(conn.peer, conn);
+      const prev = conns.get(conn.peer);
+      if (prev && prev !== conn) prev.close();   // don't pile up half-open links for one player
+      conns.set(conn.peer, conn);   // the newest attempt from this player wins
       players[conn.peer] = blankPlayer(String(msg.name).slice(0, 16));
+      raceIds.delete(conn.peer);   // they missed the start, so the race must not wait on them
       conn.send({ t: "cfg", cfg });
       broadcastPlayers(true);
+      checkOver();
+    } else if (conns.get(conn.peer) !== conn) {
+      return;   // a leftover attempt from a player who has already reconnected
     } else if (msg.t === "prog" && players[conn.peer] && racing) {
       Object.assign(players[conn.peer], pickProg(msg));
       broadcastPlayers(msg.done);
       checkOver();
     }
   });
-  conn.on("close", () => { conns.delete(conn.peer); delete players[conn.peer]; broadcastPlayers(true); checkOver(); });
+  conn.on("close", () => {
+    if (conns.get(conn.peer) !== conn) return;   // superseded by a reconnect; don't drop the live player
+    conns.delete(conn.peer); delete players[conn.peer]; raceIds.delete(conn.peer);
+    broadcastPlayers(true); checkOver();
+  });
 }
 const pickProg = m => ({ progress: +m.progress || 0, wpm: +m.wpm || 0, acc: +m.acc || 0, done: !!m.done, time: +m.time || 0 });
 
@@ -641,3 +788,8 @@ $("box").addEventListener("click", () => $("box").focus());
 document.addEventListener("click", e => { if (e.target.closest("button") && racing) $("box").focus(); });
 
 applySettings();
+
+// a host who refreshes gets their own room back, so nobody has to rejoin
+let savedName = "";
+try { savedName = localStorage.getItem("typerace-name") || ""; } catch {}
+if (savedName && /^[A-Z]{4}$/.test(hashCode) && hostedCode() === hashCode) createRoom(savedName, hashCode);
