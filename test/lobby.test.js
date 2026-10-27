@@ -113,7 +113,10 @@ const vis = (p, sel) => p.isVisible(sel);
   await guest.fill("#code", "");
   await guest.press("#name", "Enter");
   await guest.waitForTimeout(300);
-  check("Enter after failed join doesn't open empty room", !(await vis(guest, "#backRow")) && /creating|room/.test(await guest.textContent("#homeErr") + (await vis(guest, "#room") ? (await guest.textContent("#roomCode")) : "")));
+  check("Enter after failed join doesn't open empty room",
+    !(await vis(guest, "#backRow")) &&
+    (/creating room/.test(await guest.textContent("#homeErr")) ||
+     (await vis(guest, "#room") && /^[A-Z]{4}$/.test((await guest.textContent("#roomCode")).trim()))));
 
   // --- host refresh: reclaims the same room, guest reconnects by itself ---
   const h2 = await (await browser.newContext({ viewport: { width: 1100, height: 750 } })).newPage();

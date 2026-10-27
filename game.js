@@ -225,7 +225,7 @@ function hostedCode() {
 }
 
 // every room change bumps this, so a timer from an abandoned attempt does nothing
-let roomGen = 0, createTimer = null, rejoinTimer = null, connTimer = null, rejoinTries = 0;
+let roomGen = 0, createTimer = null, rejoinTimer = null, connTimer = null, rejoinTries = 0, everOpen = false;
 const REJOINS = 20;
 
 function clearTimers() { clearTimeout(createTimer); clearTimeout(rejoinTimer); clearTimeout(connTimer); }
@@ -247,8 +247,9 @@ function createRoom(name, code = null, tries = 0) {
     if (p !== peer) return p.destroy();
     if (err.type !== "unavailable-id") {
       // PeerJS has already given up on this peer, so the room is finished
-      return isHost ? setStatus("lost the connection to the server — nobody new can join")
-                    : homeErr("couldn't create room: " + err.type);
+      if (isHost) return setStatus("lost the connection to the server — nobody new can join");
+      p.destroy(); peer = null; roomCode = "";
+      return homeErr("couldn't create room: " + err.type);
     }
     p.destroy(); peer = null;
     // the broker holds a reloaded host's old id for a moment, so wait and try again
@@ -256,8 +257,8 @@ function createRoom(name, code = null, tries = 0) {
     if (!code && tries < 5) return createRoom(name, null, tries + 1);
     roomCode = "";
     if (!code) return homeErr("couldn't create room: " + err.type);
-    info(`someone else is hosting room ${code} — joining instead`);   // a friend revived it while we were away
-    joinRoom(name, code);
+    joinRoom(name, code);   // a friend revived it while we were away, so join theirs
+    info(`someone else is hosting room ${code} — joining it`);
   });
 }
 
@@ -267,18 +268,20 @@ function joinRoom(name, code) {
   ++roomGen;
   $("hostInsteadBtn").classList.add("hidden");
   info("joining…");
-  roomCode = code; rejoinTries = 0;
+  roomCode = code; rejoinTries = 0; everOpen = false;
   const p = peer = new Peer();
   p.on("open", () => { if (p !== peer) return p.destroy(); myId = p.id; connectToHost(name); });
   p.on("error", err => {
     if (p !== peer) return p.destroy();
     if (err.type === "peer-unavailable") {
-      if (rejoinTries) return retryJoin(name);   // the host may just be reloading
+      if (everOpen) return retryJoin(name);   // we were in this room, so the host is probably reloading
+      clearTimers();                          // nobody has ever answered on this code; stop knocking
       homeErr(`no one is hosting room ${code}`);
       return offerHosting(code);
     }
     if (err.type === "network" || err.type === "disconnected") {   // a blip, not a dead room
-      if (!p.destroyed) p.reconnect?.();
+      // PeerJS throws if it isn't actually disconnected, and the throw would unwind its own handler
+      try { if (p.disconnected && !p.destroyed) p.reconnect(); } catch {}
       return retryJoin(name);
     }
     homeErr("couldn't join: " + err.type);
@@ -288,13 +291,16 @@ function joinRoom(name, code) {
 function connectToHost(name) {
   if (!peer || !roomCode || isHost) return;
   clearTimeout(connTimer);
+  if (peer.destroyed) return;
+  if (peer.disconnected) return retryJoin(name);   // connect() would just return nothing
   const stale = hostConn; hostConn = null; stale?.close();   // don't leave half-open attempts behind
   const conn = hostConn = peer.connect(PREFIX + roomCode, { reliable: true });
+  if (!conn) return retryJoin(name);
   const g = roomGen;
   conn.on("open", () => {
     if (conn !== hostConn) return conn.close();
     clearTimeout(connTimer);
-    rejoinTries = 0; homeErr("");
+    rejoinTries = 0; everOpen = true; homeErr("");
     conn.send({ t: "hello", name });
     if (!joined) return enterRoom();
     if ($("room").classList.contains("hidden")) { showBackRow(); return info(`back in room ${roomCode}`); }
@@ -304,7 +310,7 @@ function connectToHost(name) {
   conn.on("close", () => {
     if (conn !== hostConn) return;
     hostConn = null; clearTimeout(connTimer);
-    stopRace(); clearRaceView();   // that race is over for us; don't leave its words on screen
+    stopRace(); clearRaceView(true);   // that race is over for us, but leave any results on screen
     retryJoin(name);   // most likely the host refreshed; wait for them to come back
   });
   // an attempt can hang with neither open nor close, so keep the budget moving
@@ -360,12 +366,12 @@ function showBackRow() {
   $("backRow").classList.remove("hidden");
 }
 
-function clearRaceView() {
+function clearRaceView(keepResults) {
   Object.assign(T, { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen: null, endMs: 0 });
   raceCfg = null;
   $("words").innerHTML = "";
   $("miniTimer").textContent = ""; $("miniWpm").textContent = "";
-  $("results").classList.add("hidden");
+  if (!keepResults) $("results").classList.add("hidden");
 }
 
 function leaveRoom() {
@@ -374,7 +380,7 @@ function leaveRoom() {
   // destroy() fires close events right away; clear these first so the handlers see no room
   const old = peer;
   peer = hostConn = null; conns.clear(); clearTimeout(bcTimer);
-  clearTimers(); rejoinTries = 0; ++roomGen;
+  clearTimers(); rejoinTries = 0; everOpen = false; ++roomGen;
   old?.destroy();
   players = {}; isHost = solo = false; myId = null; roomCode = ""; joined = false;
   loadCfg();   // a guest's cfg was overwritten by the host's
@@ -437,12 +443,14 @@ $("cfgBar").onclick = e => {
 function onGuest(conn) {
   conn.on("data", msg => {
     if (msg.t === "hello") {
-      conns.set(conn.peer, conn);
+      conns.set(conn.peer, conn);   // the newest attempt from this player wins
       players[conn.peer] = blankPlayer(String(msg.name).slice(0, 16));
       raceIds.delete(conn.peer);   // they missed the start, so the race must not wait on them
       conn.send({ t: "cfg", cfg });
       broadcastPlayers(true);
       checkOver();
+    } else if (conns.get(conn.peer) !== conn) {
+      return;   // a leftover attempt from a player who has already reconnected
     } else if (msg.t === "prog" && players[conn.peer] && racing) {
       Object.assign(players[conn.peer], pickProg(msg));
       broadcastPlayers(msg.done);
@@ -450,6 +458,7 @@ function onGuest(conn) {
     }
   });
   conn.on("close", () => {
+    if (conns.get(conn.peer) !== conn) return;   // superseded by a reconnect; don't drop the live player
     conns.delete(conn.peer); delete players[conn.peer]; raceIds.delete(conn.peer);
     broadcastPlayers(true); checkOver();
   });
