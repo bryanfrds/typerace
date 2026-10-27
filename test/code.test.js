@@ -53,15 +53,24 @@ async function typeLines(page, nLines) {
   await page.click('[data-c="mode"][data-v="words"]');
   await page.click('[data-c="amount"][data-v="5"]');
   await page.waitForTimeout(300);
-  // whole snippets: the code must never stop mid-block, and N must mean N
+  // whole snippets: the rendered text must be exactly N complete blocks, in order
   for (const n of [1, 2, 3, 5]) {
     await page.click(`[data-c="amount"][data-v="${n}"]`);
     await page.waitForTimeout(250);
-    const got = await page.evaluate(() => ({ lines: T.lines.length, text: T.lines.map(l => l.indent + l.tokens.map(i => T.words[i]).join(" ")).join("\n"), snips: SNIPPETS[cfg.lang] }));
-    const firsts = got.snips.map(s => s.split("\n")[0]);
-    const opens = (got.text.match(/{/g) || []).length, closes = (got.text.match(/}/g) || []).length;
-    check(`${n} snippet(s) starts whole blocks`, firsts.filter(f => got.text.includes(f)).length === n, got.lines + " lines, " + firsts.filter(f => got.text.includes(f)).length + " block starts");
-    check(`${n} snippet(s) has balanced braces`, opens === closes, `{${opens} }${closes}`);
+    const got = await page.evaluate(() => ({
+      text: T.lines.map(l => l.indent + l.tokens.map(i => T.words[i]).join(" ")).join("\n"),
+      snips: SNIPPETS[cfg.lang],
+    }));
+    const pool = got.snips.map(x => x.split("\n").filter(l => l.trim()).join("\n"));
+    let rest = got.text, blocks = 0;
+    while (rest.length && blocks <= n) {
+      const hit = pool.find(x => rest === x || rest.startsWith(x + "\n"));
+      if (!hit) break;
+      rest = rest.slice(hit.length).replace(/^\n/, "");
+      blocks++;
+    }
+    check(`${n} snippet(s) renders exactly ${n} whole blocks`, blocks === n && rest === "",
+      `matched ${blocks}, leftover ${JSON.stringify(rest.slice(0, 40))}`);
   }
   await page.click('[data-c="amount"][data-v="3"]');
   await page.waitForTimeout(250);
