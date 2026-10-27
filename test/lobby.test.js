@@ -142,6 +142,13 @@ const vis = (p, sel) => p.isVisible(sel);
   await g2.waitForFunction(() => document.querySelectorAll("#words .w").length > 0, null, { timeout: 15000 })
     .then(() => check("race works after host refresh", true), () => check("race works after host refresh", false));
   await h2.click("#endBtn");
+  await g2.waitForSelector("#results:not(.hidden)", { timeout: 8000 });
+
+  // a host reload after the race must not wipe the results the guest is reading
+  await h2.reload();
+  await g2.waitForTimeout(1500);
+  check("guest keeps its results while reconnecting", await vis(g2, "#results"));
+  await h2.waitForSelector("#room:not(.hidden)", { timeout: 30000 });
 
   // guest refresh: rejoins via the invite link
   await g2.reload();
@@ -152,7 +159,7 @@ const vis = (p, sel) => p.isVisible(sel);
   // joining a code nobody hosts offers to host it
   const g3 = await (await browser.newContext()).newPage();
   await g3.goto(URL); await g3.fill("#name", "x"); await g3.fill("#code", "ZZZZ"); await g3.click("#joinBtn");
-  await g3.waitForSelector("#hostInsteadBtn:not(.hidden)", { timeout: 25000 })
+  await g3.waitForSelector("#hostInsteadBtn:not(.hidden)", { timeout: 8000 })   // offered at once, not after the retry budget
     .then(() => check("dead code offers 'host this room instead'", true), () => check("dead code offers 'host this room instead'", false));
   await g3.click("#hostInsteadBtn");
   await g3.waitForSelector("#room:not(.hidden)", { timeout: 20000 });

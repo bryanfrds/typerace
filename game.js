@@ -230,6 +230,9 @@ const REJOINS = 20;
 
 function clearTimers() { clearTimeout(createTimer); clearTimeout(rejoinTimer); clearTimeout(connTimer); }
 
+// PeerJS throws unless it really is disconnected, and a throw here would unwind its own handler
+function reconnectPeer(p) { try { if (p === peer && p.disconnected && !p.destroyed) p.reconnect(); } catch {} }
+
 function createRoom(name, code = null, tries = 0) {
   clearTimers();
   const g = ++roomGen;
@@ -280,8 +283,9 @@ function joinRoom(name, code) {
       return offerHosting(code);
     }
     if (err.type === "network" || err.type === "disconnected") {   // a blip, not a dead room
-      // PeerJS throws if it isn't actually disconnected, and the throw would unwind its own handler
-      try { if (p.disconnected && !p.destroyed) p.reconnect(); } catch {}
+      // PeerJS reports this before it marks itself disconnected, so reconnect on the next tick
+      setTimeout(() => reconnectPeer(p), 0);
+      if (hostConn?.open) return;   // the broker is gone but our link to the host isn't: say nothing
       return retryJoin(name);
     }
     homeErr("couldn't join: " + err.type);
@@ -292,7 +296,7 @@ function connectToHost(name) {
   if (!peer || !roomCode || isHost) return;
   clearTimeout(connTimer);
   if (peer.destroyed) return;
-  if (peer.disconnected) return retryJoin(name);   // connect() would just return nothing
+  if (peer.disconnected) { reconnectPeer(peer); return retryJoin(name); }   // connect() would just return nothing
   const stale = hostConn; hostConn = null; stale?.close();   // don't leave half-open attempts behind
   const conn = hostConn = peer.connect(PREFIX + roomCode, { reliable: true });
   if (!conn) return retryJoin(name);
@@ -322,7 +326,7 @@ function connectToHost(name) {
 
 // the host's page reload drops every guest, so keep knocking for a while before giving up
 function retryJoin(name) {
-  clearTimeout(rejoinTimer);
+  clearTimeout(rejoinTimer); clearTimeout(connTimer);   // one attempt costs one try, however it failed
   if (!peer || !roomCode || isHost) return;
   const g = roomGen;
   if (++rejoinTries > REJOINS) {
@@ -443,6 +447,8 @@ $("cfgBar").onclick = e => {
 function onGuest(conn) {
   conn.on("data", msg => {
     if (msg.t === "hello") {
+      const prev = conns.get(conn.peer);
+      if (prev && prev !== conn) prev.close();   // don't pile up half-open links for one player
       conns.set(conn.peer, conn);   // the newest attempt from this player wins
       players[conn.peer] = blankPlayer(String(msg.name).slice(0, 16));
       raceIds.delete(conn.peer);   // they missed the start, so the race must not wait on them
