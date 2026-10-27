@@ -425,10 +425,10 @@ len: equ $ - msg`,
     ret`,
 `fib:
     xor rax, rax
-    mov rbx, 1
+    mov rcx, 1
 .loop:
-    add rax, rbx
-    xchg rax, rbx
+    add rax, rcx
+    xchg rax, rcx
     dec rdi
     jnz .loop
     ret`,
@@ -441,12 +441,18 @@ len: equ $ - msg`,
     je .same
     inc rdi
     inc rsi
-    jmp .next`,
+    jmp .next
+.diff:
+    mov rax, 1
+    ret
+.same:
+    xor rax, rax
+    ret`,
 `    cmp rdi, rsi
-    jle .smaller
+    jle .use_rsi
     mov rax, rdi
     jmp .done
-.smaller:
+.use_rsi:
     mov rax, rsi
 .done:
     ret`,
@@ -475,7 +481,12 @@ len: equ $ - msg`,
     pop rsi
     pop rdi
     test rax, rax
-    jz .failed`,
+    jz .failed
+    mov [rdi], rax
+    ret
+.failed:
+    mov rax, -1
+    ret`,
 `count_bits:
     xor rax, rax
 .loop:
@@ -500,7 +511,9 @@ len: equ $ - msg`,
     mov [rdi], al
     inc rdi
     dec rsi
-    jmp .loop`,
+    jmp .loop
+.done:
+    ret`,
 `    lea rdi, [rel fmt]
     lea rsi, [rel name]
     xor eax, eax

@@ -139,9 +139,11 @@ async function typeLines(page, nLines) {
     indents: T.lines.map(l => l.indent.length),
   }));
   check("assembly snippets load", /\b(mov|ret|syscall|cmp|jmp|xor|push)\b/.test(asm.text), asm.text.split("\n")[0]);
-  check("assembly keeps its indentation", asm.indents.some(n => n === 4) || asm.indents.every(n => n === 0),
+  check("assembly keeps its indentation", asm.indents.some(n => n === 4) && (await page.$$("#words .cline .ind")).length > 0,
     "indents " + JSON.stringify([...new Set(asm.indents)]));
-  check("every language is offered", (await page.$$('[data-c="lang"]')).length === 4);
+  check("no token carries leading whitespace", await page.evaluate(() => T.words.every(w => w === w.trim() && w.length > 0)));
+  const langCount = await page.evaluate(() => LANGS.length);
+  check("every language is offered", (await page.$$('[data-c="lang"]')).length === langCount, langCount + " languages");
 
   // back to words mode still works
   await page.click('[data-c="code"]');
