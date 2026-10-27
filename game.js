@@ -171,14 +171,19 @@ function myName() {
 }
 function homeErr(msg) { $("homeErr").textContent = msg; }
 $("soloBtn").onclick = () => {
+  leaveRoom();
   solo = isHost = true; myId = "me";
   players = { me: blankPlayer(myName()) };
   enterRoom();
   hostStart();
 };
-$("leaveBtn").onclick = () => { peer?.destroy(); location.href = location.pathname; };
-$("createBtn").onclick = () => createRoom(myName());
-$("joinBtn").onclick = () => joinRoom(myName(), $("code").value.trim().toUpperCase());
+// going home keeps the room open, so friends don't have to rejoin
+$("logo").onclick = e => { e.preventDefault(); goHome(); };
+$("leaveBtn").onclick = goHome;
+$("backBtn").onclick = showRoom;
+$("leaveRoomBtn").onclick = leaveRoom;
+$("createBtn").onclick = () => { leaveRoom(); createRoom(myName()); };
+$("joinBtn").onclick = () => { leaveRoom(); joinRoom(myName(), $("code").value.trim().toUpperCase()); };
 $("code").onkeydown = e => { if (e.key === "Enter") $("joinBtn").click(); };
 $("name").onkeydown = e => { if (e.key === "Enter") ($("code").value ? $("joinBtn") : $("createBtn")).click(); };
 const randomCode = () => Array.from({ length: 4 }, () => ALPHA[Math.floor(Math.random() * ALPHA.length)]).join("");
@@ -202,23 +207,55 @@ function joinRoom(name, code) {
   peer = new Peer();
   peer.on("open", id => {
     myId = id;
-    hostConn = peer.connect(PREFIX + code, { reliable: true });
-    hostConn.on("open", () => { hostConn.send({ t: "hello", name }); enterRoom(); });
-    hostConn.on("data", onHostMsg);
-    hostConn.on("close", () => { setStatus("the host left the room"); stopRace(); });
+    const conn = hostConn = peer.connect(PREFIX + code, { reliable: true });
+    conn.on("open", () => { conn.send({ t: "hello", name }); enterRoom(); });
+    conn.on("data", onHostMsg);
+    conn.on("close", () => { if (conn === hostConn) { setStatus("the host left the room"); stopRace(); } });
   });
   peer.on("error", err => homeErr(err.type === "peer-unavailable" ? "no room with that code" : "couldn't join: " + err.type));
 }
 
 const blankPlayer = name => ({ name, progress: 0, wpm: 0, acc: 0, done: false, time: 0 });
 
-function enterRoom() {
+function showRoom() {
   $("home").classList.add("hidden");
+  $("backRow").classList.add("hidden");
   $("room").classList.remove("hidden");
   $("leaveBtn").classList.remove("hidden");
+  $("roomInfo").classList.toggle("hidden", solo);
+  scrollWords(); placeCaret();   // positions read as 0 while the room was hidden
+  if (T.live && !T.done) $("box").focus();
+}
+
+function goHome() {
+  if ($("room").classList.contains("hidden")) return;
+  if (solo) leaveRoom();   // nothing to keep in solo
+  $("room").classList.add("hidden");
+  $("home").classList.remove("hidden");
+  $("leaveBtn").classList.add("hidden");
+  $("roomInfo").classList.add("hidden");
+  if (roomCode) {
+    $("backBtn").textContent = `back to room ${roomCode}`;
+    $("backRow").classList.remove("hidden");
+  }
+}
+
+function leaveRoom() {
+  stopRace();
+  peer?.destroy();
+  peer = hostConn = null; conns.clear();
+  players = {}; isHost = solo = false; myId = null; roomCode = "";
+  $("backRow").classList.add("hidden");
+  $("results").classList.add("hidden");
+  $("startBtn").textContent = "start race";
+  homeErr("");
+  history.replaceState(null, "", location.pathname);
+}
+
+function enterRoom() {
+  showRoom();
   $("players").classList.toggle("hidden", solo);
   if (!solo) {
-    $("roomInfo").classList.remove("hidden");
     $("roomCode").textContent = roomCode;
     history.replaceState(null, "", "#" + roomCode);
   }
@@ -343,6 +380,7 @@ $("endBtn").onclick = () => { if (isHost && racing) endRace(); };
 
 let countdownTimer = null, clockTimer = null;
 function beginCountdown(seed, c) {
+  if ($("room").classList.contains("hidden")) showRoom();   // a guest on the home screen gets pulled into the race
   racing = true; raceCfg = c;
   for (const p of Object.values(players)) Object.assign(p, blankPlayer(p.name));
   renderPlayers(); renderCfg(); showControls();
