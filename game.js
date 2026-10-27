@@ -373,6 +373,139 @@ for row in rows:
         sys.exit(f"no such path: {args.path}")
     run(args.path, dry_run=args.dry_run)`,
   ],
+  // x86-64, Intel syntax: labels at the margin, instructions indented
+  assembly: [
+`section .text
+global _start
+_start:
+    mov rax, 60
+    xor rdi, rdi
+    syscall`,
+`section .data
+msg: db "hello, world", 10
+len: equ $ - msg`,
+`strlen:
+    xor rax, rax
+.next:
+    cmp byte [rdi + rax], 0
+    je .done
+    inc rax
+    jmp .next
+.done:
+    ret`,
+`max:
+    mov rax, rdi
+    cmp rsi, rax
+    cmovg rax, rsi
+    ret`,
+`sum:
+    xor rax, rax
+    xor rcx, rcx
+.loop:
+    add rax, [rsi + rcx * 8]
+    inc rcx
+    cmp rcx, rdx
+    jl .loop
+    ret`,
+`    mov rax, 1
+    mov rdi, 1
+    mov rsi, msg
+    mov rdx, len
+    syscall`,
+`    push rbp
+    mov rbp, rsp
+    sub rsp, 32
+    mov [rbp - 8], rdi
+    mov [rbp - 16], rsi`,
+`swap:
+    mov rax, [rdi]
+    mov rcx, [rsi]
+    mov [rdi], rcx
+    mov [rsi], rax
+    ret`,
+`fib:
+    xor rax, rax
+    mov rbx, 1
+.loop:
+    add rax, rbx
+    xchg rax, rbx
+    dec rdi
+    jnz .loop
+    ret`,
+`strcmp:
+.next:
+    mov al, [rdi]
+    cmp al, [rsi]
+    jne .diff
+    test al, al
+    je .same
+    inc rdi
+    inc rsi
+    jmp .next`,
+`    cmp rdi, rsi
+    jle .smaller
+    mov rax, rdi
+    jmp .done
+.smaller:
+    mov rax, rsi
+.done:
+    ret`,
+`memcpy:
+    mov rcx, rdx
+    cld
+    rep movsb
+    ret`,
+`    movsd xmm0, [rdi]
+    mulsd xmm0, xmm1
+    addsd xmm0, [rsi]
+    movsd [rdx], xmm0`,
+`factorial:
+    mov rax, 1
+.loop:
+    test rdi, rdi
+    jz .done
+    imul rax, rdi
+    dec rdi
+    jmp .loop
+.done:
+    ret`,
+`    push rdi
+    push rsi
+    call process
+    pop rsi
+    pop rdi
+    test rax, rax
+    jz .failed`,
+`count_bits:
+    xor rax, rax
+.loop:
+    test rdi, rdi
+    jz .done
+    mov rcx, rdi
+    and rcx, 1
+    add rax, rcx
+    shr rdi, 1
+    jmp .loop
+.done:
+    ret`,
+`reverse:
+    mov rsi, rdi
+    add rsi, rdx
+    dec rsi
+.loop:
+    cmp rdi, rsi
+    jge .done
+    mov al, [rdi]
+    xchg al, [rsi]
+    mov [rdi], al
+    inc rdi
+    dec rsi
+    jmp .loop`,
+`    lea rdi, [rel fmt]
+    lea rsi, [rel name]
+    xor eax, eax
+    call printf wrt ..plt`,
+  ],
 };
 const LANGS = Object.keys(SNIPPETS);
 
