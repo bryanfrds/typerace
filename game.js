@@ -155,8 +155,12 @@ const ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 let peer, isHost = false, solo = false, hostConn = null, myId = null, roomCode = "";
 const conns = new Map();
 let players = {};
-let cfg = { mode: "time", time: 15, words: 50, punctuation: false, numbers: false };
-try { Object.assign(cfg, JSON.parse(localStorage.getItem("typerace-cfg") || "{}")); } catch {}
+let cfg;
+function loadCfg() {
+  cfg = { mode: "time", time: 15, words: 50, punctuation: false, numbers: false };
+  try { Object.assign(cfg, JSON.parse(localStorage.getItem("typerace-cfg") || "{}")); } catch {}
+}
+loadCfg();
 let racing = false, raceCfg = null, raceIds = new Set();
 
 // ---------- home ----------
@@ -178,14 +182,22 @@ $("soloBtn").onclick = () => {
   hostStart();
 };
 // going home keeps the room open, so friends don't have to rejoin
-$("logo").onclick = e => { e.preventDefault(); goHome(); };
+$("logo").onclick = e => { if (e.metaKey || e.ctrlKey) return; e.preventDefault(); goHome(); };
 $("leaveBtn").onclick = goHome;
 $("backBtn").onclick = showRoom;
 $("leaveRoomBtn").onclick = leaveRoom;
 $("createBtn").onclick = () => { leaveRoom(); createRoom(myName()); };
-$("joinBtn").onclick = () => { leaveRoom(); joinRoom(myName(), $("code").value.trim().toUpperCase()); };
+$("joinBtn").onclick = () => {
+  const code = $("code").value.trim().toUpperCase();
+  if (!/^[A-Z]{4}$/.test(code)) return homeErr("room codes are 4 letters");   // check before dropping the current room
+  leaveRoom(); joinRoom(myName(), code);
+};
 $("code").onkeydown = e => { if (e.key === "Enter") $("joinBtn").click(); };
-$("name").onkeydown = e => { if (e.key === "Enter") ($("code").value ? $("joinBtn") : $("createBtn")).click(); };
+$("name").onkeydown = e => {
+  if (e.key !== "Enter") return;
+  if (roomCode) { e.stopPropagation(); return $("backBtn").click(); }   // don't drop a kept room on a stray Enter, or let it start a race
+  ($("code").value ? $("joinBtn") : $("createBtn")).click();
+};
 const randomCode = () => Array.from({ length: 4 }, () => ALPHA[Math.floor(Math.random() * ALPHA.length)]).join("");
 
 function createRoom(name, tries = 0) {
@@ -210,7 +222,12 @@ function joinRoom(name, code) {
     const conn = hostConn = peer.connect(PREFIX + code, { reliable: true });
     conn.on("open", () => { conn.send({ t: "hello", name }); enterRoom(); });
     conn.on("data", onHostMsg);
-    conn.on("close", () => { if (conn === hostConn) { setStatus("the host left the room"); stopRace(); } });
+    conn.on("close", () => {
+      if (conn !== hostConn) return;
+      hostConn = null;
+      if ($("room").classList.contains("hidden")) { leaveRoom(); return homeErr("the host left the room"); }
+      setStatus("the host left the room"); stopRace();
+    });
   });
   peer.on("error", err => homeErr(err.type === "peer-unavailable" ? "no room with that code" : "couldn't join: " + err.type));
 }
@@ -229,7 +246,9 @@ function showRoom() {
 
 function goHome() {
   if ($("room").classList.contains("hidden")) return;
-  if (solo) leaveRoom();   // nothing to keep in solo
+  // typing is ignored on the home screen, so leaving mid-race would stall it for everyone
+  if (racing && !solo && !T.done) return setStatus(isHost ? "finish or end the race before going home" : "finish the race before going home");
+  if (solo || (!isHost && !hostConn)) leaveRoom();   // nothing to keep: solo, or the host already left
   $("room").classList.add("hidden");
   $("home").classList.remove("hidden");
   $("leaveBtn").classList.add("hidden");
@@ -242,9 +261,15 @@ function goHome() {
 
 function leaveRoom() {
   stopRace();
-  peer?.destroy();
-  peer = hostConn = null; conns.clear();
-  players = {}; isHost = solo = false; myId = null; roomCode = "";
+  // destroy() fires close events right away; clear these first so the handlers see no room
+  const old = peer;
+  peer = hostConn = null; conns.clear(); clearTimeout(bcTimer);
+  old?.destroy();
+  players = {}; isHost = solo = false; myId = null; roomCode = ""; raceCfg = null;
+  loadCfg();   // a guest's cfg was overwritten by the host's
+  Object.assign(T, { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen: null, endMs: 0 });
+  $("words").innerHTML = "";
+  $("miniTimer").textContent = ""; $("miniWpm").textContent = "";
   $("backRow").classList.add("hidden");
   $("results").classList.add("hidden");
   $("startBtn").textContent = "start race";
