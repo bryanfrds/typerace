@@ -54,6 +54,114 @@ return [...counts].sort((a, b) => b[1] - a[1]);`,
   if (!btn || btn.disabled) return;
   handle(btn.dataset.action);
 });`,
+`function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) {
+    out.push(arr.slice(i, i + size));
+  }
+  return out;
+}`,
+`const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function retry(fn, times = 3) {
+  for (let i = 0; i < times; i++) {
+    try { return await fn(); } catch (err) { await sleep(2 ** i * 100); }
+  }
+  throw new Error("gave up after " + times + " tries");
+}`,
+`function flatten(value, depth = 1) {
+  if (depth < 1 || !Array.isArray(value)) return value;
+  return value.reduce((out, item) => out.concat(flatten(item, depth - 1)), []);
+}`,
+`const slug = title => title
+  .toLowerCase()
+  .replace(/[^a-z0-9]+/g, "-")
+  .replace(/^-|-$/g, "");`,
+`let id = null;
+window.addEventListener("resize", () => {
+  cancelAnimationFrame(id);
+  id = requestAnimationFrame(() => layout(window.innerWidth));
+});`,
+`function binarySearch(xs, target) {
+  let lo = 0, hi = xs.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid] === target) return mid;
+    xs[mid] < target ? lo = mid + 1 : hi = mid - 1;
+  }
+  return -1;
+}`,
+`export const store = {
+  state: load(),
+  set(patch) {
+    this.state = { ...this.state, ...patch };
+    localStorage.setItem("state", JSON.stringify(this.state));
+    this.listeners.forEach(fn => fn(this.state));
+  },
+  listeners: [],
+};`,
+`const rows = await db.query(
+  "select id, name from users where team = ? order by name",
+  [teamId]
+);
+return rows.map(({ id, name }) => ({ id, name }));`,
+`function once(fn) {
+  let called = false, value;
+  return (...args) => {
+    if (!called) { called = true; value = fn(...args); }
+    return value;
+  };
+}`,
+`if (!localStorage.getItem("token")) {
+  location.replace("/login?next=" + encodeURIComponent(location.pathname));
+} else {
+  init();
+}`,
+`const total = items.reduce((sum, item) => sum + item.price * item.qty, 0);
+const vat = Math.round(total * 0.06 * 100) / 100;
+console.log("due:", (total + vat).toFixed(2));`,
+`class EventBus {
+  constructor() {
+    this.handlers = new Map();
+  }
+  on(name, fn) {
+    if (!this.handlers.has(name)) this.handlers.set(name, new Set());
+    this.handlers.get(name).add(fn);
+  }
+  emit(name, data) {
+    for (const fn of this.handlers.get(name) || []) fn(data);
+  }
+}`,
+`async function* pages(url) {
+  let next = url;
+  while (next) {
+    const res = await fetch(next);
+    const body = await res.json();
+    yield body.items;
+    next = body.next;
+  }
+}`,
+`const observer = new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    if (entry.isIntersecting) entry.target.classList.add("seen");
+  }
+}, { threshold: 0.25 });`,
+`function deepEqual(a, b) {
+  if (a === b) return true;
+  if (typeof a !== "object" || typeof b !== "object" || !a || !b) return false;
+  const ka = Object.keys(a), kb = Object.keys(b);
+  return ka.length === kb.length && ka.every(k => deepEqual(a[k], b[k]));
+}`,
+`process.on("unhandledRejection", err => {
+  logger.error({ err }, "unhandled rejection");
+  process.exit(1);
+});`,
+`const form = new FormData(event.target);
+const payload = Object.fromEntries(form.entries());
+await fetch("/api/save", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify(payload),
+});`,
   ],
   typescript: [
 `interface User {
@@ -88,6 +196,71 @@ useEffect(() => {
   load().then(d => alive && setState({ loading: false, data: d }));
   return () => { alive = false; };
 }, []);`,
+`export type Status = "idle" | "loading" | "error" | "done";
+export interface Job {
+  id: string;
+  status: Status;
+  startedAt?: Date;
+}`,
+`function isUser(value: unknown): value is User {
+  return typeof value === "object" && value !== null && "id" in value;
+}`,
+`const cache = new Map<string, Promise<Config>>();
+export function loadConfig(env: string): Promise<Config> {
+  if (!cache.has(env)) cache.set(env, fetchConfig(env));
+  return cache.get(env)!;
+}`,
+`export default async function handler(req: Request): Promise<Response> {
+  if (req.method !== "POST") {
+    return new Response("method not allowed", { status: 405 });
+  }
+  const body = (await req.json()) as Payload;
+  return Response.json(await save(body));
+}`,
+`type Props = {
+  label: string;
+  onPick: (value: number) => void;
+  disabled?: boolean;
+};`,
+`class Repo<T extends { id: string }> {
+  private items = new Map<string, T>();
+  save(item: T): void {
+    this.items.set(item.id, item);
+  }
+  find(id: string): T | undefined {
+    return this.items.get(id);
+  }
+}`,
+`enum Level {
+  Debug = 10,
+  Info = 20,
+  Warn = 30,
+  Error = 40,
+}`,
+`const parsed = schema.safeParse(input);
+if (!parsed.success) {
+  throw new BadRequest(parsed.error.issues[0].message);
+}
+return parsed.data;`,
+`export function assertNever(value: never): never {
+  throw new Error("unexpected value: " + JSON.stringify(value));
+}`,
+`async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, rej) => setTimeout(() => rej(new Error("timeout")), ms)),
+  ]);
+}`,
+`const columns: Array<keyof Row> = ["id", "name", "createdAt"];
+const header = columns.map(c => String(c).toUpperCase()).join(",");`,
+`try {
+  await db.transaction(async tx => {
+    await tx.insert(orders).values(order);
+    await tx.update(stock).set({ left: stock.left - 1 });
+  });
+} catch (err: unknown) {
+  logger.error(err instanceof Error ? err.message : String(err));
+}`,
   ],
   python: [
 `def sum_all(xs):
@@ -125,6 +298,80 @@ except ValueError as err:
 if not results:
     raise RuntimeError("nothing passed the filter")
 return max(results, key=lambda r: r.score)`,
+`def chunk(items, size):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]`,
+`@dataclass
+class Order:
+    id: int
+    total: float
+    paid: bool = False`,
+`async def fetch_all(urls):
+    async with aiohttp.ClientSession() as session:
+        tasks = [session.get(u) for u in urls]
+        return await asyncio.gather(*tasks)`,
+`def binary_search(xs, target):
+    lo, hi = 0, len(xs) - 1
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        if xs[mid] == target:
+            return mid
+        if xs[mid] < target:
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return -1`,
+`parser = argparse.ArgumentParser(description="sync the archive")
+parser.add_argument("path", help="folder to sync")
+parser.add_argument("--dry-run", action="store_true")
+args = parser.parse_args()`,
+`df = pd.read_csv(path, parse_dates=["created_at"])
+weekly = df.groupby(pd.Grouper(key="created_at", freq="W")).size()
+print(weekly.tail(8))`,
+`@app.route("/api/users/<int:user_id>")
+def get_user(user_id):
+    user = User.query.get_or_404(user_id)
+    return jsonify(user.to_dict())`,
+`def memoize(fn):
+    cache = {}
+    def wrapper(*args):
+        if args not in cache:
+            cache[args] = fn(*args)
+        return cache[args]
+    return wrapper`,
+`logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+log = logging.getLogger(__name__)`,
+`with sqlite3.connect(db_path) as conn:
+    cur = conn.execute("select name, score from players order by score desc")
+    for name, score in cur.fetchmany(10):
+        print(f"{name:<12} {score:>5}")`,
+`def is_palindrome(text):
+    cleaned = [c.lower() for c in text if c.isalnum()]
+    return cleaned == cleaned[::-1]`,
+`class Stack:
+    def __init__(self):
+        self._items = []
+    def push(self, item):
+        self._items.append(item)
+    def pop(self):
+        if not self._items:
+            raise IndexError("pop from empty stack")
+        return self._items.pop()`,
+`seen = set()
+unique = []
+for row in rows:
+    key = (row.email, row.team)
+    if key not in seen:
+        seen.add(key)
+        unique.append(row)`,
+`def main():
+    args = parse_args()
+    if not args.path.exists():
+        sys.exit(f"no such path: {args.path}")
+    run(args.path, dry_run=args.dry_run)`,
   ],
 };
 const LANGS = Object.keys(SNIPPETS);
