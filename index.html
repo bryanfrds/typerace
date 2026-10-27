@@ -12,7 +12,7 @@
 <body>
 <div class="wrap">
   <header>
-    <div class="logo">type<span>race</span></div>
+    <a id="logo" class="logo" href="./">type<span>race</span></a>
     <div>
       <span id="roomInfo" class="hidden">
         <span class="muted">room</span> <b id="roomCode"></b>
@@ -24,6 +24,10 @@
   </header>
 
   <section id="home">
+    <div id="backRow" class="row hidden">
+      <button id="backBtn" class="primary" style="flex:1">back to room</button>
+      <button id="leaveRoomBtn">leave room</button>
+    </div>
     <label for="name">your name</label>
     <input id="name" maxlength="16" placeholder="name" autocomplete="off">
     <button id="soloBtn" class="primary">solo</button>
