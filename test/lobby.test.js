@@ -146,8 +146,9 @@ const vis = (p, sel) => p.isVisible(sel);
 
   // a host reload after the race must not wipe the results the guest is reading
   await h2.reload();
-  await g2.waitForTimeout(1500);
-  check("guest keeps its results while reconnecting", await vis(g2, "#results"));
+  const sawReconnect = await g2.waitForFunction(() => /reconnecting/.test(document.getElementById("status").textContent), null, { timeout: 20000 })
+    .then(() => true, () => false);
+  check("guest keeps its results while reconnecting", sawReconnect && await vis(g2, "#results"), sawReconnect ? "" : "never saw the reconnect");
   await h2.waitForSelector("#room:not(.hidden)", { timeout: 30000 });
 
   // guest refresh: rejoins via the invite link

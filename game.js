@@ -177,6 +177,7 @@ function myName() {
 }
 function homeErr(msg) { $("homeErr").textContent = msg; $("homeErr").classList.remove("info"); }
 function info(msg) { $("homeErr").textContent = msg; $("homeErr").classList.add("info"); }   // progress, not a failure
+const say = msg => $("room").classList.contains("hidden") ? homeErr(msg) : setStatus(msg);
 $("soloBtn").onclick = () => {
   leaveRoom();
   solo = isHost = true; myId = "me";
@@ -242,6 +243,8 @@ function createRoom(name, code = null, tries = 0) {
   const p = peer = new Peer(PREFIX + roomCode);
   p.on("open", id => {
     if (p !== peer) return p.destroy();   // superseded: don't sit on the broker holding a room id
+    // open fires again after a reconnect, and the room must survive that untouched
+    if (isHost && myId === id) return setStatus("back online — friends can join again");
     isHost = true; myId = id; players = { [id]: blankPlayer(name) };
     rememberHosting(roomCode); homeErr(""); enterRoom();
   });
@@ -250,7 +253,10 @@ function createRoom(name, code = null, tries = 0) {
     if (p !== peer) return p.destroy();
     if (err.type !== "unavailable-id") {
       // PeerJS has already given up on this peer, so the room is finished
-      if (isHost) return setStatus("lost the connection to the server — nobody new can join");
+      if (isHost) {   // the room keeps working; only new guests need the server
+        setTimeout(() => reconnectPeer(p), 0);
+        return setStatus("lost the connection to the server — reconnecting…");
+      }
       p.destroy(); peer = null; roomCode = "";
       return homeErr("couldn't create room: " + err.type);
     }
@@ -273,7 +279,12 @@ function joinRoom(name, code) {
   info("joining…");
   roomCode = code; rejoinTries = 0; everOpen = false;
   const p = peer = new Peer();
-  p.on("open", () => { if (p !== peer) return p.destroy(); myId = p.id; connectToHost(name); });
+  p.on("open", () => {
+    if (p !== peer) return p.destroy();
+    myId = p.id;
+    if (hostConn?.open) return;   // a reconnect to the broker; our link to the host is fine as it is
+    connectToHost(name);
+  });
   p.on("error", err => {
     if (p !== peer) return p.destroy();
     if (err.type === "peer-unavailable") {
@@ -288,13 +299,13 @@ function joinRoom(name, code) {
       if (hostConn?.open) return;   // the broker is gone but our link to the host isn't: say nothing
       return retryJoin(name);
     }
-    homeErr("couldn't join: " + err.type);
+    say("couldn't join: " + err.type);   // tell them wherever they are looking
   });
 }
 
 function connectToHost(name) {
   if (!peer || !roomCode || isHost) return;
-  clearTimeout(connTimer);
+  clearTimeout(connTimer); clearTimeout(rejoinTimer);   // this attempt replaces any pending one
   if (peer.destroyed) return;
   if (peer.disconnected) { reconnectPeer(peer); return retryJoin(name); }   // connect() would just return nothing
   const stale = hostConn; hostConn = null; stale?.close();   // don't leave half-open attempts behind
