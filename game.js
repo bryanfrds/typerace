@@ -208,7 +208,6 @@ function createRoom(name, tries = 0) {
   peer.on("connection", onGuest);
   peer.on("error", err => {
     if (err.type === "unavailable-id" && tries < 5) { peer.destroy(); return createRoom(name, tries + 1); }
-    roomCode = "";
     homeErr("couldn't create room: " + err.type);
   });
 }
@@ -230,10 +229,7 @@ function joinRoom(name, code) {
       setStatus("the host left the room"); stopRace();
     });
   });
-  peer.on("error", err => {
-    roomCode = ""; hostConn = null;
-    homeErr(err.type === "peer-unavailable" ? "no room with that code" : "couldn't join: " + err.type);
-  });
+  peer.on("error", err => homeErr(err.type === "peer-unavailable" ? "no room with that code" : "couldn't join: " + err.type));
 }
 
 const blankPlayer = name => ({ name, progress: 0, wpm: 0, acc: 0, done: false, time: 0 });
