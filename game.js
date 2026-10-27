@@ -273,16 +273,20 @@ function makeCodeGen(seed, cfg) {
   const rng = mulberry32(seed);
   const snips = SNIPPETS[cfg.lang] || SNIPPETS[LANGS[0]];
   let bag = [];
-  return n => {
-    const nLines = Math.max(1, Math.floor(n) || 10);   // a peer on an older build may send no line count
+  const nextSnippet = () => {
+    if (!bag.length) bag = shuffled(snips.slice(), rng);
+    return bag.pop().split("\n").filter(l => l.trim())
+      .map(l => ({ indent: l.match(/^[ \t]*/)[0], text: l.trim() }));
+  };
+  return (n, unit) => {
+    const want = Math.max(1, Math.min(Math.floor(n) || 1, unit === "snippets" ? 20 : 200));   // a peer may send junk
     const out = [];
-    while (out.length < nLines) {
-      if (!bag.length) bag = shuffled(snips.slice(), rng);
-      for (const l of bag.pop().split("\n")) {
-        if (l.trim()) out.push({ indent: l.match(/^[ \t]*/)[0], text: l.trim() });
-      }
+    if (unit === "snippets") {   // whole blocks, so the code never stops mid-brace
+      for (let i = 0; i < want; i++) out.push(...nextSnippet());
+      return out;
     }
-    return out.slice(0, nLines);   // whole snippets overshoot; 5 lines has to mean 5
+    while (out.length < want) out.push(...nextSnippet());   // timed mode: one continuous stream
+    return out.slice(0, want);
   };
 }
 
@@ -315,7 +319,7 @@ const conns = new Map();
 let players = {};
 let cfg;
 function loadCfg() {
-  cfg = { mode: "time", time: 15, words: 50, lines: 10, punctuation: false, numbers: false, code: false, lang: LANGS[0] };
+  cfg = { mode: "time", time: 15, words: 50, snippets: 1, punctuation: false, numbers: false, code: false, lang: LANGS[0] };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem("typerace-cfg") || "{}")); } catch {}
   if (!SNIPPETS[cfg.lang]) cfg.lang = LANGS[0];
 }
@@ -593,7 +597,7 @@ $("copyBtn").onclick = () => {
 };
 
 // ---------- race config bar ----------
-const amountKey = c => c.mode === "time" ? "time" : c.code ? "lines" : "words";
+const amountKey = c => c.mode === "time" ? "time" : c.code ? "snippets" : "words";
 function renderFooter() {
   const code = (raceCfg || cfg).code;
   const newline = code ? "<kbd>enter</kbd> new line &nbsp; " : "";
@@ -606,7 +610,7 @@ function renderCfg() {
   const dis = !isHost || (racing && !solo) ? "disabled" : "";
   const pill = (on, attrs, label) => `<button class="pill ${on ? "on" : ""}" ${attrs} ${dis}>${label}</button>`;
   const key = amountKey(cfg);
-  const amounts = cfg.mode === "time" ? [15, 30, 60, 120] : cfg.code ? [5, 10, 20, 40] : [10, 25, 50, 100];
+  const amounts = cfg.mode === "time" ? [15, 30, 60, 120] : cfg.code ? [1, 2, 3, 5] : [10, 25, 50, 100];
   const left = cfg.code
     ? LANGS.map(l => pill(cfg.lang === l, `data-c="lang" data-v="${l}"`, l)).join("")
     : pill(cfg.punctuation, 'data-c="punctuation"', "@ punctuation") + pill(cfg.numbers, 'data-c="numbers"', "# numbers");
@@ -615,10 +619,11 @@ function renderCfg() {
     <div class="sep"></div>
     <div class="grp">${left}</div>
     <div class="sep"></div>
-    <div class="grp">${pill(cfg.mode === "time", 'data-c="mode" data-v="time"', "⏱ time")}${pill(cfg.mode === "words", 'data-c="mode" data-v="words"', cfg.code ? "A lines" : "A words")}</div>
+    <div class="grp">${pill(cfg.mode === "time", 'data-c="mode" data-v="time"', "⏱ time")}${pill(cfg.mode === "words", 'data-c="mode" data-v="words"', cfg.code ? "{} snippets" : "A words")}</div>
     <div class="sep"></div>
     <div class="grp">${amounts.map(a => pill(cfg[key] === a, `data-c="amount" data-v="${a}"`, a)).join("")}</div>`;
-  $("cfgNote").textContent = isHost ? (cfg.code ? "press enter at the end of a line — the indent is typed for you" : "")
+  $("cfgNote").textContent = isHost ? (cfg.code ? cfg.mode === "words" ? "finish the code as fast as you can — enter ends a line, the indent is typed for you"
+                                             : "press enter at the end of a line — the indent is typed for you" : "")
                                    : "the host picks the race settings";
   renderFooter();
 }
@@ -811,7 +816,7 @@ function setupTyping(seed, c) {
                      code, lines: [], lineOf: [], last: [] });
   if (code) {
     $("words").innerHTML = "";   // the previous test's text must go first
-    addLines(gen(c.mode === "words" ? c.lines : 24));
+    addLines(gen(c.mode === "words" ? c.snippets : 24, c.mode === "words" ? "snippets" : "lines"));
     $("words").insertAdjacentHTML("beforeend", `<div id="caret"></div>`);
   } else {
     T.words = gen(c.mode === "words" ? c.words : 120);
@@ -843,7 +848,7 @@ function addLines(lines) {
 
 function moreWords() {   // time mode never runs out of text
   if (raceCfg.mode !== "time" || T.wi < T.words.length - 40) return;
-  if (T.code) return addLines(T.gen(12));
+  if (T.code) return addLines(T.gen(12, "lines"));
   const start = T.words.length;
   T.words.push(...T.gen(60));
   $("caret").insertAdjacentHTML("beforebegin", T.words.slice(start).map((_, i) => `<span class="w" id="w${start + i}"></span>`).join(""));
@@ -916,9 +921,10 @@ function stats() {
 function updateMini() {
   if (!T.live) return;
   const ms = T.endMs || (T.start ? performance.now() - T.start : 0);
+  const line = Math.min((T.lineOf[T.wi] ?? T.lines.length) + (T.done ? 0 : 1), T.lines.length);
   $("miniTimer").textContent = raceCfg.mode === "time"
     ? Math.max(0, Math.ceil(raceCfg.time - ms / 1000))
-    : T.code ? `${Math.min(T.lineOf[T.wi] ?? T.lines.length, T.lines.length)}/${T.lines.length} lines`
+    : T.code ? `${(ms / 1000).toFixed(1)}s · line ${line}/${T.lines.length}`   // a stopwatch, not a deadline
              : `${Math.min(T.wi, T.words.length)}/${T.words.length}`;
   $("miniWpm").textContent = T.keys ? stats().wpm : "";
 }
@@ -930,7 +936,9 @@ function finishTyping() {
   clearInterval(clockTimer);
   const s = stats();
   $("miniTimer").textContent = "";
-  $("miniWpm").textContent = `${s.wpm} wpm · ${s.acc}% acc`;
+  // in a finish-the-code test the time taken is the score, so lead with it
+  $("miniWpm").textContent = (T.code && raceCfg.mode === "words" ? `${(s.time / 1000).toFixed(1)}s · ` : "")
+    + `${s.wpm} wpm · ${s.acc}% acc`;
   $("miniWpm").classList.remove("hidden");
   setStatus("finished! waiting for the others…");
   placeCaret(); updateKeymap();

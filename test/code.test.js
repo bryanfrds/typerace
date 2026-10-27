@@ -53,14 +53,20 @@ async function typeLines(page, nLines) {
   await page.click('[data-c="mode"][data-v="words"]');
   await page.click('[data-c="amount"][data-v="5"]');
   await page.waitForTimeout(300);
-  check("5 lines means 5 lines", (await page.evaluate(() => T.lines.length)) === 5, (await page.evaluate(() => T.lines.length)) + " lines");
-  for (const n of [10, 20, 40]) {
+  // whole snippets: the code must never stop mid-block, and N must mean N
+  for (const n of [1, 2, 3, 5]) {
     await page.click(`[data-c="amount"][data-v="${n}"]`);
     await page.waitForTimeout(250);
-    check(`${n} lines means ${n} lines`, (await page.evaluate(() => T.lines.length)) === n, (await page.evaluate(() => T.lines.length)) + " lines");
+    const got = await page.evaluate(() => ({ lines: T.lines.length, text: T.lines.map(l => l.indent + l.tokens.map(i => T.words[i]).join(" ")).join("\n"), snips: SNIPPETS[cfg.lang] }));
+    const firsts = got.snips.map(s => s.split("\n")[0]);
+    const opens = (got.text.match(/{/g) || []).length, closes = (got.text.match(/}/g) || []).length;
+    check(`${n} snippet(s) starts whole blocks`, firsts.filter(f => got.text.includes(f)).length === n, got.lines + " lines, " + firsts.filter(f => got.text.includes(f)).length + " block starts");
+    check(`${n} snippet(s) has balanced braces`, opens === closes, `{${opens} }${closes}`);
   }
-  await page.click('[data-c="amount"][data-v="5"]');
+  await page.click('[data-c="amount"][data-v="3"]');
   await page.waitForTimeout(250);
+  check("stopwatch counts up instead of down", /^0\.\ds · line 1\//.test(await page.textContent("#miniTimer")) || (await page.textContent("#miniTimer")) === "",
+    JSON.stringify(await page.textContent("#miniTimer")));
 
   // type it correctly and check the result
   await page.click("#box");
@@ -70,6 +76,8 @@ async function typeLines(page, nLines) {
   const r = await page.evaluate(() => ({ acc: players.me.acc, wpm: players.me.wpm }));
   check("clean run is 100% accurate", r.acc === 100, `acc=${r.acc} wpm=${r.wpm}`);
   check("wpm is counted", r.wpm > 10, "wpm=" + r.wpm + " (a bot types faster than people)");
+  check("finish line leads with the time taken", /^\d+\.\ds · /.test(await page.textContent("#miniWpm")), await page.textContent("#miniWpm"));
+  check("results show a finish time", /\ds/.test(await page.textContent("#results")));
   await page.screenshot({ path: OUT + "/c2-code-results.png" });
 
   // space at the end of a line must not skip the line break
