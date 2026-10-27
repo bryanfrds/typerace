@@ -182,7 +182,7 @@ $("soloBtn").onclick = () => {
   hostStart();
 };
 // going home keeps the room open, so friends don't have to rejoin
-$("logo").onclick = e => { if (e.metaKey || e.ctrlKey) return; e.preventDefault(); goHome(); };
+$("logo").onclick = e => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); goHome(); };
 $("leaveBtn").onclick = goHome;
 $("backBtn").onclick = showRoom;
 $("leaveRoomBtn").onclick = leaveRoom;
@@ -195,7 +195,7 @@ $("joinBtn").onclick = () => {
 $("code").onkeydown = e => { if (e.key === "Enter") $("joinBtn").click(); };
 $("name").onkeydown = e => {
   if (e.key !== "Enter") return;
-  if (roomCode) { e.stopPropagation(); return $("backBtn").click(); }   // don't drop a kept room on a stray Enter, or let it start a race
+  if (!$("backRow").classList.contains("hidden")) { e.stopPropagation(); return $("backBtn").click(); }   // don't drop a kept room on a stray Enter, or let it start a race
   ($("code").value ? $("joinBtn") : $("createBtn")).click();
 };
 const randomCode = () => Array.from({ length: 4 }, () => ALPHA[Math.floor(Math.random() * ALPHA.length)]).join("");
@@ -208,6 +208,7 @@ function createRoom(name, tries = 0) {
   peer.on("connection", onGuest);
   peer.on("error", err => {
     if (err.type === "unavailable-id" && tries < 5) { peer.destroy(); return createRoom(name, tries + 1); }
+    roomCode = "";
     homeErr("couldn't create room: " + err.type);
   });
 }
@@ -229,7 +230,10 @@ function joinRoom(name, code) {
       setStatus("the host left the room"); stopRace();
     });
   });
-  peer.on("error", err => homeErr(err.type === "peer-unavailable" ? "no room with that code" : "couldn't join: " + err.type));
+  peer.on("error", err => {
+    roomCode = ""; hostConn = null;
+    homeErr(err.type === "peer-unavailable" ? "no room with that code" : "couldn't join: " + err.type);
+  });
 }
 
 const blankPlayer = name => ({ name, progress: 0, wpm: 0, acc: 0, done: false, time: 0 });
