@@ -1,5 +1,134 @@
 const WORDS = "the be of and a to in he have it that for they with as not on she at by this we you do but from or which one would all will there say who make when can more if no man out other so what time up go about than into could state only new year some take come these know see use get like then first any work now may such give over think most even find day also after way many must look before great back through long where much should well people down own just because good each those feel seem how high too place little world very still nation hand old life tell write become here show house both between need mean call develop under last right move thing general school never same another begin while number part turn real leave might want point form off child few small since against ask late home interest large person end open public follow during present without again hold govern around possible head consider word program problem however lead system set order eye plan run keep face fact group play stand increase early course change help line".split(" ");
 
+// ---------- code snippets (no blank lines: every line is something to type) ----------
+const SNIPPETS = {
+  javascript: [
+`function sum(xs) {
+  let total = 0;
+  for (const x of xs) {
+    total += x;
+  }
+  return total;
+}`,
+`const res = await fetch(url);
+if (!res.ok) {
+  throw new Error("request failed: " + res.status);
+}
+const data = await res.json();`,
+`export function debounce(fn, ms) {
+  let id;
+  return (...args) => {
+    clearTimeout(id);
+    id = setTimeout(() => fn(...args), ms);
+  };
+}`,
+`const counts = new Map();
+for (const word of words) {
+  counts.set(word, (counts.get(word) || 0) + 1);
+}
+return [...counts].sort((a, b) => b[1] - a[1]);`,
+`class Queue {
+  constructor() {
+    this.items = [];
+  }
+  push(item) {
+    this.items.push(item);
+  }
+  pop() {
+    return this.items.shift();
+  }
+}`,
+`try {
+  const config = JSON.parse(raw);
+  apply(config);
+} catch (err) {
+  console.error("bad config", err);
+  process.exit(1);
+}`,
+`const names = users
+  .filter(u => u.active)
+  .map(u => u.name.trim())
+  .sort((a, b) => a.localeCompare(b));`,
+`document.addEventListener("click", e => {
+  const btn = e.target.closest("button");
+  if (!btn || btn.disabled) return;
+  handle(btn.dataset.action);
+});`,
+  ],
+  typescript: [
+`interface User {
+  id: number;
+  name: string;
+  active: boolean;
+}`,
+`export async function getUser(id: number): Promise<User> {
+  const res = await fetch("/api/users/" + id);
+  if (!res.ok) throw new Error(res.statusText);
+  return res.json() as Promise<User>;
+}`,
+`type Result<T> = { ok: true; value: T } | { ok: false; error: string };
+function unwrap<T>(r: Result<T>): T {
+  if (!r.ok) throw new Error(r.error);
+  return r.value;
+}`,
+`const byId = new Map<number, User>();
+for (const user of users) {
+  byId.set(user.id, user);
+}`,
+`function groupBy<T, K extends string>(xs: T[], key: (x: T) => K) {
+  const out = {} as Record<K, T[]>;
+  for (const x of xs) {
+    (out[key(x)] ||= []).push(x);
+  }
+  return out;
+}`,
+`const [state, setState] = useState<State>({ loading: true });
+useEffect(() => {
+  let alive = true;
+  load().then(d => alive && setState({ loading: false, data: d }));
+  return () => { alive = false; };
+}, []);`,
+  ],
+  python: [
+`def sum_all(xs):
+    total = 0
+    for x in xs:
+        total += x
+    return total`,
+`with open(path) as f:
+    for line in f:
+        if line.startswith("#"):
+            continue
+        rows.append(line.strip())`,
+`class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+    def dist(self):
+        return (self.x ** 2 + self.y ** 2) ** 0.5`,
+`counts = {}
+for word in words:
+    counts[word] = counts.get(word, 0) + 1
+top = sorted(counts.items(), key=lambda kv: -kv[1])`,
+`try:
+    data = json.loads(raw)
+except ValueError as err:
+    print("bad json:", err)
+    sys.exit(1)`,
+`def fib(n):
+    a, b = 0, 1
+    while n > 0:
+        a, b = b, a + b
+        n -= 1
+    return a`,
+`results = [r for r in rows if r.score > 50]
+if not results:
+    raise RuntimeError("nothing passed the filter")
+return max(results, key=lambda r: r.score)`,
+  ],
+};
+const LANGS = Object.keys(SNIPPETS);
+
 // ---------- themes & settings ----------
 const THEMES = {
   "olivia (yours)": ["#1c1b1d","#deaf9d","#deaf9d","#716462","#262223","#f2d0c4","#bf616a","#793e44"],
@@ -14,6 +143,12 @@ const THEMES = {
   "paper":          ["#eeeeee","#444444","#444444","#b2b2b2","#e0e0e0","#444444","#d70000","#8a0000"],
 };
 const VARS = ["--bg","--main","--caret","--sub","--sub-alt","--text","--err","--err-extra"];
+// code needs the real line layout, so one-line tape mode is off there
+const tapeOn = () => S.tape && !(raceCfg || cfg).code;
+function applyMode() {
+  document.body.classList.toggle("code", !!(raceCfg || cfg).code);
+  document.body.classList.toggle("tape", tapeOn());
+}
 
 // defaults copied from Bryan's monkeytype config
 const DEFAULTS = {
@@ -43,7 +178,7 @@ function applySettings() {
   document.documentElement.style.setProperty("--font", `"${S.font}"`);
   document.documentElement.style.setProperty("--size", S.fontSize + "rem");
   document.documentElement.style.setProperty("--caret-ms", { off: "0ms", slow: "150ms", medium: "100ms", fast: "50ms" }[S.smoothCaret]);
-  document.body.classList.toggle("tape", S.tape);
+  applyMode();
   document.body.classList.toggle("flip", S.flip);
   $("keymap").classList.toggle("hidden", S.keymap === "off");
   $("miniWpm").classList.toggle("hidden", !S.liveWpm);
@@ -129,6 +264,28 @@ function updateKeymap() {
 // ---------- word generation (seeded so every player gets the same text) ----------
 function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
   t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const shuffled = (a, rng) => {
+  for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; }
+  return a;
+};
+// whole snippets, so the code on screen always makes sense; the indent is never typed
+function makeCodeGen(seed, cfg) {
+  const rng = mulberry32(seed);
+  const snips = SNIPPETS[cfg.lang] || SNIPPETS[LANGS[0]];
+  let bag = [];
+  return n => {
+    const nLines = Math.max(1, Math.floor(n) || 10);   // a peer on an older build may send no line count
+    const out = [];
+    while (out.length < nLines) {
+      if (!bag.length) bag = shuffled(snips.slice(), rng);
+      for (const l of bag.pop().split("\n")) {
+        if (l.trim()) out.push({ indent: l.match(/^[ \t]*/)[0], text: l.trim() });
+      }
+    }
+    return out.slice(0, nLines);   // whole snippets overshoot; 5 lines has to mean 5
+  };
+}
+
 function makeGen(seed, cfg) {
   const rng = mulberry32(seed);
   let sentenceStart = true;
@@ -158,8 +315,9 @@ const conns = new Map();
 let players = {};
 let cfg;
 function loadCfg() {
-  cfg = { mode: "time", time: 15, words: 50, punctuation: false, numbers: false };
+  cfg = { mode: "time", time: 15, words: 50, lines: 10, punctuation: false, numbers: false, code: false, lang: LANGS[0] };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem("typerace-cfg") || "{}")); } catch {}
+  if (!SNIPPETS[cfg.lang]) cfg.lang = LANGS[0];
 }
 loadCfg();
 let racing = false, raceCfg = null, raceIds = new Set();
@@ -388,8 +546,10 @@ function showBackRow() {
 }
 
 function clearRaceView(keepResults) {
-  Object.assign(T, { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen: null, endMs: 0 });
+  Object.assign(T, { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen: null, endMs: 0,
+                     code: false, lines: [], lineOf: [], last: [] });
   raceCfg = null;
+  applyMode();
   $("words").innerHTML = "";
   $("miniTimer").textContent = ""; $("miniWpm").textContent = "";
   if (!keepResults) $("results").classList.add("hidden");
@@ -422,9 +582,7 @@ function enterRoom() {
     history.replaceState(null, "", "#" + roomCode);
   }
   setStatus(isHost ? "share the invite link, then start the race" : "waiting for the host to start");
-  $("footer").innerHTML = solo ? "<kbd>enter</kbd> restart &nbsp; <kbd>esc</kbd> settings"
-    : isHost ? "<kbd>enter</kbd> start race &nbsp; <kbd>esc</kbd> settings" : "<kbd>esc</kbd> settings";
-  renderCfg(); renderPlayers(); showControls();
+  renderFooter(); renderCfg(); renderPlayers(); showControls();
 }
 
 $("copyBtn").onclick = () => {
@@ -435,25 +593,43 @@ $("copyBtn").onclick = () => {
 };
 
 // ---------- race config bar ----------
+const amountKey = c => c.mode === "time" ? "time" : c.code ? "lines" : "words";
+function renderFooter() {
+  const code = (raceCfg || cfg).code;
+  const newline = code ? "<kbd>enter</kbd> new line &nbsp; " : "";
+  const restart = code ? "<kbd>tab</kbd> restart" : "<kbd>enter</kbd> restart";
+  $("footer").innerHTML = solo ? `${newline}${restart} &nbsp; <kbd>esc</kbd> settings`
+    : isHost ? `${newline}<kbd>enter</kbd> start race &nbsp; <kbd>esc</kbd> settings`
+             : `${newline}<kbd>esc</kbd> settings`;
+}
 function renderCfg() {
   const dis = !isHost || (racing && !solo) ? "disabled" : "";
   const pill = (on, attrs, label) => `<button class="pill ${on ? "on" : ""}" ${attrs} ${dis}>${label}</button>`;
-  const amounts = cfg.mode === "time" ? [15, 30, 60, 120] : [10, 25, 50, 100];
+  const key = amountKey(cfg);
+  const amounts = cfg.mode === "time" ? [15, 30, 60, 120] : cfg.code ? [5, 10, 20, 40] : [10, 25, 50, 100];
+  const left = cfg.code
+    ? LANGS.map(l => pill(cfg.lang === l, `data-c="lang" data-v="${l}"`, l)).join("")
+    : pill(cfg.punctuation, 'data-c="punctuation"', "@ punctuation") + pill(cfg.numbers, 'data-c="numbers"', "# numbers");
   $("cfgBar").innerHTML = `
-    <div class="grp">${pill(cfg.punctuation, 'data-c="punctuation"', "@ punctuation")}${pill(cfg.numbers, 'data-c="numbers"', "# numbers")}</div>
+    <div class="grp">${pill(cfg.code, 'data-c="code"', "{} code")}</div>
     <div class="sep"></div>
-    <div class="grp">${pill(cfg.mode === "time", 'data-c="mode" data-v="time"', "⏱ time")}${pill(cfg.mode === "words", 'data-c="mode" data-v="words"', "A words")}</div>
+    <div class="grp">${left}</div>
     <div class="sep"></div>
-    <div class="grp">${amounts.map(a => pill(cfg[cfg.mode] === a, `data-c="amount" data-v="${a}"`, a)).join("")}</div>`;
-  $("cfgNote").textContent = isHost ? "" : "the host picks the race settings";
+    <div class="grp">${pill(cfg.mode === "time", 'data-c="mode" data-v="time"', "⏱ time")}${pill(cfg.mode === "words", 'data-c="mode" data-v="words"', cfg.code ? "A lines" : "A words")}</div>
+    <div class="sep"></div>
+    <div class="grp">${amounts.map(a => pill(cfg[key] === a, `data-c="amount" data-v="${a}"`, a)).join("")}</div>`;
+  $("cfgNote").textContent = isHost ? (cfg.code ? "press enter at the end of a line — the indent is typed for you" : "")
+                                   : "the host picks the race settings";
+  renderFooter();
 }
 $("cfgBar").onclick = e => {
   const b = e.target.closest("[data-c]");
   if (!b || b.disabled) return;
   const c = b.dataset.c;
-  if (c === "punctuation" || c === "numbers") cfg[c] = !cfg[c];
+  if (c === "punctuation" || c === "numbers" || c === "code") { cfg[c] = !cfg[c]; if (c === "code") applyMode(); }
   else if (c === "mode") cfg.mode = b.dataset.v;
-  else cfg[cfg.mode] = +b.dataset.v;
+  else if (c === "lang") cfg.lang = b.dataset.v;
+  else cfg[amountKey(cfg)] = +b.dataset.v;
   try { localStorage.setItem("typerace-cfg", JSON.stringify(cfg)); } catch {}
   renderCfg();
   for (const c of conns.values()) c.send({ t: "cfg", cfg });
@@ -497,7 +673,11 @@ function broadcastPlayers(now) {
 
 function onHostMsg(msg) {
   if (msg.t === "players") { players = msg.players; renderPlayers(); }
-  else if (msg.t === "cfg") { cfg = msg.cfg; renderCfg(); }
+  else if (msg.t === "cfg") {   // merge: a host on an older build sends no code settings at all
+    cfg = { ...cfg, ...msg.cfg };
+    if (!SNIPPETS[cfg.lang]) cfg.lang = LANGS[0];
+    renderCfg(); applyMode();
+  }
   else if (msg.t === "start") beginCountdown(msg.seed, msg.cfg);
   else if (msg.t === "over") { players = msg.players; showResults(); }
 }
@@ -620,19 +800,50 @@ function showResults() {
 }
 
 // ---------- typing engine ----------
-const T = { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen: null, endMs: 0 };
+const T = { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen: null, endMs: 0,
+            code: false, lines: [], lineOf: [], last: [] };
 
 function setupTyping(seed, c) {
-  const gen = makeGen(seed, c);
-  const words = gen(c.mode === "words" ? c.words : 120);
-  Object.assign(T, { words, wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen, endMs: 0 });
-  $("words").innerHTML = words.map((_, i) => `<span class="w" id="w${i}"></span>`).join("") + `<div id="caret"></div>`;
-  words.forEach((_, i) => renderWord(i));
+  const code = !!c.code;
+  applyMode();
+  const gen = code ? makeCodeGen(seed, c) : makeGen(seed, c);
+  Object.assign(T, { words: [], wi: 0, input: "", typed: [], live: false, start: 0, keys: 0, good: 0, done: false, gen, endMs: 0,
+                     code, lines: [], lineOf: [], last: [] });
+  if (code) {
+    $("words").innerHTML = "";   // the previous test's text must go first
+    addLines(gen(c.mode === "words" ? c.lines : 24));
+    $("words").insertAdjacentHTML("beforeend", `<div id="caret"></div>`);
+  } else {
+    T.words = gen(c.mode === "words" ? c.words : 120);
+    $("words").innerHTML = T.words.map((_, i) => `<span class="w" id="w${i}"></span>`).join("") + `<div id="caret"></div>`;
+    T.words.forEach((_, i) => renderWord(i));
+  }
   scrollWords(); placeCaret();
 }
 
-function moreWords() {   // time mode never runs out of words
+// code is kept as lines of tokens: you type the tokens, the indent is already there
+function addLines(lines) {
+  const fromLine = T.lines.length;
+  let html = "";
+  for (const ln of lines) {
+    const ids = [];
+    for (const tok of ln.text.split(/\s+/)) {
+      ids.push(T.words.length);
+      T.lineOf.push(T.lines.length); T.last.push(false); T.words.push(tok);
+    }
+    T.last[T.words.length - 1] = true;
+    T.lines.push({ indent: ln.indent, tokens: ids });
+    html += `<div class="cline">${ln.indent ? `<span class="ind">${esc(ln.indent)}</span>` : ""}`
+          + ids.map(i => `<span class="w" id="w${i}"></span>`).join("") + `</div>`;
+  }
+  const caret = $("caret");
+  caret ? caret.insertAdjacentHTML("beforebegin", html) : $("words").insertAdjacentHTML("beforeend", html);
+  for (const ln of T.lines.slice(fromLine)) for (const i of ln.tokens) renderWord(i);
+}
+
+function moreWords() {   // time mode never runs out of text
   if (raceCfg.mode !== "time" || T.wi < T.words.length - 40) return;
+  if (T.code) return addLines(T.gen(12));
   const start = T.words.length;
   T.words.push(...T.gen(60));
   $("caret").insertAdjacentHTML("beforebegin", T.words.slice(start).map((_, i) => `<span class="w" id="w${start + i}"></span>`).join(""));
@@ -672,7 +883,7 @@ function placeCaret() {
 function scrollWords() {
   const el = $("w" + T.wi);
   if (!el) return;
-  if (S.tape) {
+  if (tapeOn()) {
     $("words").style.transform = `translateX(${$("box").clientWidth * 0.5 - el.offsetLeft}px)`;
   } else {
     const lineH = el.offsetHeight || 1;
@@ -707,7 +918,8 @@ function updateMini() {
   const ms = T.endMs || (T.start ? performance.now() - T.start : 0);
   $("miniTimer").textContent = raceCfg.mode === "time"
     ? Math.max(0, Math.ceil(raceCfg.time - ms / 1000))
-    : `${Math.min(T.wi, T.words.length)}/${T.words.length}`;
+    : T.code ? `${Math.min(T.lineOf[T.wi] ?? T.lines.length, T.lines.length)}/${T.lines.length} lines`
+             : `${Math.min(T.wi, T.words.length)}/${T.words.length}`;
   $("miniWpm").textContent = T.keys ? stats().wpm : "";
 }
 
@@ -732,8 +944,11 @@ document.addEventListener("keydown", e => {
     return;
   }
   if (settingsOpen() || $("room").classList.contains("hidden")) return;
-  if (e.key === "Enter" && solo) { e.preventDefault(); stopRace(); return hostStart(); }
-  if (e.key === "Enter" && isHost && !racing) { e.preventDefault(); return hostStart(); }
+  const codeLive = T.code && T.live && !T.done;   // enter is a newline then, so tab restarts instead
+  // only while a code test is on screen, so tab still reaches the buttons otherwise
+  if (e.key === "Tab" && T.code && solo && (T.live || T.done)) { e.preventDefault(); stopRace(); return hostStart(); }
+  if (e.key === "Enter" && !codeLive && solo) { e.preventDefault(); stopRace(); return hostStart(); }
+  if (e.key === "Enter" && !codeLive && isHost && !racing) { e.preventDefault(); return hostStart(); }
   if (!T.live || T.done || e.ctrlKey || e.metaKey || e.altKey) return;
   if (!T.start && (e.key.length === 1 && e.key !== " ")) {
     T.start = performance.now();
@@ -755,9 +970,11 @@ document.addEventListener("keydown", e => {
     else if (T.wi > 0 && T.typed[T.wi - 1] !== T.words[T.wi - 1]) {   // go back to fix a wrong word
       T.wi--; T.input = T.typed[T.wi]; T.typed.length = T.wi;
     }
-  } else if (e.key === " ") {
+  } else if (e.key === " " || (e.key === "Enter" && T.code)) {
     e.preventDefault();
     if (!T.input) return;
+    // a line ends with enter, not space: the next line's indent is already on screen
+    if (T.code && T.last[T.wi] !== (e.key === "Enter")) return;
     T.keys++; if (T.input === target) T.good++;
     T.typed[T.wi] = T.input; T.input = "";
     if (T.wi === T.words.length - 1) { T.wi++; renderWord(prev); return finishTyping(); }
