@@ -362,12 +362,10 @@ function beginCountdown(seed, c) {
   countdownTimer = setInterval(() => {
     if (--n > 0) return setStatus(`<span id="count">${n}</span>`);
     clearInterval(countdownTimer);
-    setStatus("");
-    T.live = true; T.start = performance.now();
+    setStatus("go!");
+    T.live = true;   // like monkeytype, each player's clock starts on their first keypress
     $("box").focus();
     updateMini(); updateKeymap();
-    clearInterval(clockTimer);
-    clockTimer = setInterval(tickClock, 100);
   }, 1000);
 }
 
@@ -529,6 +527,7 @@ document.addEventListener("keydown", e => {
   if (!T.live || T.done || e.ctrlKey || e.metaKey || e.altKey) return;
   if (!T.start && (e.key.length === 1 && e.key !== " ")) {
     T.start = performance.now();
+    if (!solo) setStatus("");
     clearInterval(clockTimer);
     clockTimer = setInterval(tickClock, 100);
   }
