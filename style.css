@@ -22,6 +22,7 @@ input:focus, button:focus-visible { outline:2px solid var(--main); }
 .row { display:flex; gap:8px; }
 .row input { flex:1; min-width:0; }
 #homeErr { color:var(--err); min-height:1.2em; }
+#homeErr.info { color:var(--sub); }
 
 /* race config bar, like monkeytype's top bar */
 #cfgBar { display:flex; justify-content:center; gap:6px; margin:22px auto 0; padding:6px 10px; background:var(--sub-alt);
